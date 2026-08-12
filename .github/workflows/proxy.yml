@@ -1,0 +1,32 @@
+name: proxy-dll
+
+# The release workflow builds the proxy itself, so this workflow only acts as a
+# fast smoke check that the DLL still compiles on pull requests.
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-proxy:
+    name: Compile proxy DLL
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build proxy DLL
+        id: proxy
+        uses: ./.github/actions/build-proxy
+
+      - name: Upload proxy DLL
+        uses: actions/upload-artifact@v7
+        with:
+          name: aa_proxy-dll
+          path: ${{ steps.proxy.outputs.dll-path }}

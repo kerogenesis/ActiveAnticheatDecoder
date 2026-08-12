@@ -1,0 +1,8 @@
+[build]
+target = "i686-pc-windows-msvc"
+
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = [
+    "-C", "target-feature=+crt-static",
+    "-C", "link-arg=/DEBUG:NONE"
+]

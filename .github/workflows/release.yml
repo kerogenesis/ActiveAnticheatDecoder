@@ -1,0 +1,147 @@
+name: Publish Windows release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-release
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    name: Check release version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.repository == 'kerogenesis/ActiveAnticheatDecoder'
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      publish: ${{ steps.check.outputs.publish }}
+    steps:
+      - name: Check out with tags
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Decide whether to publish
+        id: check
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(grep -m1 '^version = ' Cargo.toml | cut -d '"' -f 2)
+          if [ -z "$version" ]; then
+            echo "::error::Could not read the package version from Cargo.toml"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+          if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::v$version is already released, skipping."
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Publishing v$version."
+          fi
+
+  release:
+    name: Build and publish
+    needs: guard
+    if: needs.guard.outputs.publish == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out merged commit
+        uses: actions/checkout@v7
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: i686-pc-windows-msvc
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build proxy DLL
+        id: proxy
+        uses: ./.github/actions/build-proxy
+
+      - name: Point the build at the proxy DLL
+        shell: pwsh
+        run: |
+          "AA_PROXY_DLL=${{ steps.proxy.outputs.dll-path }}" |
+            Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Build optimized binary
+        env:
+          AA_REQUIRE_ICON: "1"
+        run: cargo build --release --locked --bin decoder
+
+      - name: Verify the embedded icon
+        shell: pwsh
+        run: |
+          $probe = @'
+          using System;
+          using System.Runtime.InteropServices;
+
+          public static class IconProbe
+          {
+              [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+              private static extern IntPtr LoadLibraryExW(string file, IntPtr reserved, uint flags);
+
+              [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+              private static extern IntPtr FindResourceW(IntPtr module, IntPtr name, IntPtr type);
+
+              public static bool HasIcon(string path)
+              {
+                  IntPtr module = LoadLibraryExW(path, IntPtr.Zero, 0x2 | 0x20);
+                  if (module == IntPtr.Zero)
+                  {
+                      throw new InvalidOperationException(
+                          "cannot open " + path + ": " + Marshal.GetLastWin32Error());
+                  }
+
+                  return FindResourceW(module, (IntPtr)1, (IntPtr)14) != IntPtr.Zero;
+              }
+          }
+          '@
+
+          Add-Type -TypeDefinition $probe
+
+          $exe = (Resolve-Path target/i686-pc-windows-msvc/release/decoder.exe).Path
+          if (-not [IconProbe]::HasIcon($exe)) {
+            throw "the built exe has no icon resource (id 1, RT_GROUP_ICON)"
+          }
+
+      - name: Prepare release assets
+        shell: pwsh
+        run: |
+          $version = "${{ needs.guard.outputs.version }}"
+
+          $exe = "ActiveAnticheatDecoder.exe"
+          Copy-Item target/i686-pc-windows-msvc/release/decoder.exe $exe -Force
+
+          $archive = "ActiveAnticheatDecoder_$version.zip"
+          Compress-Archive -Path $exe, config.ini -DestinationPath $archive -Force
+
+          $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLower()
+          "$hash  $archive" | Set-Content SHA256SUMS.txt
+
+          "archive=$archive" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v${{ needs.guard.outputs.version }}"
+          gh release create $tag `
+            "${{ env.archive }}" `
+            SHA256SUMS.txt `
+            --target "${{ github.sha }}" `
+            --title "ActiveAnticheatDecoder $tag" `
+            --generate-notes
