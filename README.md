@@ -32,6 +32,5 @@ You can disable this in the configuration file if needed.
 
 ### Build
 
-```sh
-cargo build --release
-```
+Use `build_release.bat` script
+
