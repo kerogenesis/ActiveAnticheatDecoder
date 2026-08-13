@@ -214,15 +214,18 @@ fn decrypt_413(payload: &[u8]) -> Result<Vec<u8>> {
     if payload.len() >= 128 {
         let block_count = payload.len() / 128;
         if block_count > 0 {
-            for &(exp, mod_key) in &[(29u32, &RSA_MODULUS_KEY1), (53u32, &RSA_MODULUS_KEY2)] {
-                let mod_biguint = BigUint::from_bytes_le(mod_key);
-                let exp_biguint = BigUint::from(exp);
+            let mod1 = BigUint::from_bytes_le(&RSA_MODULUS_KEY1);
+            let mod2 = BigUint::from_bytes_le(&RSA_MODULUS_KEY2);
+            let exp_29 = BigUint::from(29u32);
+            let exp_53 = BigUint::from(53u32);
+
+            for (exp, modulus) in [(&exp_29, &mod1), (&exp_53, &mod2)] {
                 let mut reconstructed_zlib = Vec::with_capacity(block_count * 124);
                 let mut ok = true;
                 for idx in 0..block_count {
                     let chunk = &payload[idx * 128..(idx + 1) * 128];
                     let block_arr: &[u8; 128] = chunk.try_into().unwrap();
-                    let decrypted_block = rsa_modpow_block(block_arr, &mod_biguint, &exp_biguint);
+                    let decrypted_block = rsa_modpow_block(block_arr, modulus, exp);
                     let chunk_size = u32::from_be_bytes([
                         decrypted_block[0],
                         decrypted_block[1],
@@ -272,22 +275,8 @@ fn decrypt_413(payload: &[u8]) -> Result<Vec<u8>> {
                     chunk.copy_from_slice(&block);
                 }
 
-                if decrypted.len() >= 4 {
-                    let expected_size =
-                        u32::from_le_bytes(decrypted[..4].try_into().unwrap()) as usize;
-                    let mut decompressor = flate2::Decompress::new(true);
-                    let mut decompressed = Vec::with_capacity(expected_size);
-                    if decompressor
-                        .decompress_vec(
-                            &decrypted[4..],
-                            &mut decompressed,
-                            flate2::FlushDecompress::None,
-                        )
-                        .is_ok()
-                        && decompressed.len() == expected_size
-                    {
-                        return Ok(decompressed);
-                    }
+                if let Some(decompressed) = decompress_413_payload(&decrypted) {
+                    return Ok(decompressed);
                 }
             }
         }
@@ -305,10 +294,8 @@ pub fn decode_if_gamekit(data: &[u8], path: &Path) -> Result<Option<(Vec<u8>, Fo
     }
     let payload = &data[28..];
     let raw_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    let filename = raw_name
-        .strip_prefix(obfstr!("enc."))
-        .or_else(|| raw_name.strip_prefix(obfstr!("dec.")))
-        .unwrap_or(raw_name);
+    let filename = raw_name.strip_prefix(obfstr!("enc.")).unwrap_or(raw_name);
+    let filename = filename.strip_prefix(obfstr!("dec.")).unwrap_or(filename);
 
     let decoded = match format {
         FormatType::Ver111 => decrypt_111(payload),
