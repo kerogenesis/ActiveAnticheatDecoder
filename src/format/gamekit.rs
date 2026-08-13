@@ -125,6 +125,7 @@ fn key_121_from_filename(filename: &str) -> u8 {
 }
 
 fn decrypt_121(payload: &[u8], filename: &str) -> Vec<u8> {
+    let is_bmp = filename.to_ascii_lowercase().ends_with(".bmp");
     let found_key = (payload.len() >= 4)
         .then(|| {
             (0..=255u8).find(|&candidate| {
@@ -135,7 +136,7 @@ fn decrypt_121(payload: &[u8], filename: &str) -> Vec<u8> {
                 [p0, p1, p2, p3] == MAGIC_121_VTX
                     || [p0, p1, p2, p3] == MAGIC_121_OGG
                     || [p0, p1, p2, p3] == MAGIC_121_L2SD
-                    || (p0 == b'B' && p1 == b'M')
+                    || (is_bmp && p0 == b'B' && p1 == b'M')
             })
         })
         .flatten();
@@ -160,12 +161,9 @@ fn decrypt_212(payload: &[u8]) -> Vec<u8> {
         .collect()
 }
 
-fn rsa_modpow_block(block: &[u8; 128], modulus_bytes: &[u8; 128], exp: u32) -> [u8; 128] {
+fn rsa_modpow_block(block: &[u8; 128], modulus: &BigUint, exponent: &BigUint) -> [u8; 128] {
     let base = BigUint::from_bytes_be(block);
-    let modulus = BigUint::from_bytes_le(modulus_bytes);
-    let exponent = BigUint::from(exp);
-
-    let result = base.modpow(&exponent, &modulus);
+    let result = base.modpow(exponent, modulus);
     let res_bytes = result.to_bytes_be();
 
     let mut out = [0u8; 128];
@@ -217,12 +215,14 @@ fn decrypt_413(payload: &[u8]) -> Result<Vec<u8>> {
         let block_count = payload.len() / 128;
         if block_count > 0 {
             for &(exp, mod_key) in &[(29u32, &RSA_MODULUS_KEY1), (53u32, &RSA_MODULUS_KEY2)] {
+                let mod_biguint = BigUint::from_bytes_le(mod_key);
+                let exp_biguint = BigUint::from(exp);
                 let mut reconstructed_zlib = Vec::with_capacity(block_count * 124);
                 let mut ok = true;
                 for idx in 0..block_count {
                     let chunk = &payload[idx * 128..(idx + 1) * 128];
                     let block_arr: &[u8; 128] = chunk.try_into().unwrap();
-                    let decrypted_block = rsa_modpow_block(block_arr, mod_key, exp);
+                    let decrypted_block = rsa_modpow_block(block_arr, &mod_biguint, &exp_biguint);
                     let chunk_size = u32::from_be_bytes([
                         decrypted_block[0],
                         decrypted_block[1],
@@ -272,18 +272,22 @@ fn decrypt_413(payload: &[u8]) -> Result<Vec<u8>> {
                     chunk.copy_from_slice(&block);
                 }
 
-                let mut decompressor = flate2::Decompress::new(true);
-                let mut decompressed = Vec::new();
-                if decompressor
-                    .decompress_vec(
-                        &decrypted[..],
-                        &mut decompressed,
-                        flate2::FlushDecompress::None,
-                    )
-                    .is_ok()
-                    && !decompressed.is_empty()
-                {
-                    return Ok(decompressed);
+                if decrypted.len() >= 4 {
+                    let expected_size =
+                        u32::from_le_bytes(decrypted[..4].try_into().unwrap()) as usize;
+                    let mut decompressor = flate2::Decompress::new(true);
+                    let mut decompressed = Vec::with_capacity(expected_size);
+                    if decompressor
+                        .decompress_vec(
+                            &decrypted[4..],
+                            &mut decompressed,
+                            flate2::FlushDecompress::None,
+                        )
+                        .is_ok()
+                        && decompressed.len() == expected_size
+                    {
+                        return Ok(decompressed);
+                    }
                 }
             }
         }
@@ -302,13 +306,14 @@ pub fn decode_if_gamekit(data: &[u8], path: &Path) -> Result<Option<(Vec<u8>, Fo
     let payload = &data[28..];
     let raw_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     let filename = raw_name
-        .replace(obfstr!("enc."), "")
-        .replace(obfstr!("dec."), "");
+        .strip_prefix(obfstr!("enc."))
+        .or_else(|| raw_name.strip_prefix(obfstr!("dec.")))
+        .unwrap_or(raw_name);
 
     let decoded = match format {
         FormatType::Ver111 => decrypt_111(payload),
         FormatType::Ver120 => decrypt_120(payload),
-        FormatType::Ver121 => decrypt_121(payload, &filename),
+        FormatType::Ver121 => decrypt_121(payload, filename),
         FormatType::Ver211 => decrypt_211(payload),
         FormatType::Ver212 => decrypt_212(payload),
         FormatType::Ver413 => decrypt_413(payload)?,

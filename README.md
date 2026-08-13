@@ -30,7 +30,13 @@ You can disable this in the configuration file if needed.
 > **Standalone GamekitData decoding**  
 > If you want to use the `GamekitData` decoder separately without `ActiveAnticheatDecoder`, check out [ScrydeEncDec](https://github.com/kerogenesis/ScrydeEncDec).
 
-### Build
+### Environment
+
+Before building from source, make sure you have installed:
+
+* **[Rust](https://www.rust-lang.org/tools/install)** (toolchain with `cargo`)
+* **[Visual Studio](https://visualstudio.microsoft.com/)** (or **C++ Build Tools**) with the **"Desktop development with C++"** workload selected (required for MSVC linker).
+
+### Building
 
 Use `build_release.bat` script
-

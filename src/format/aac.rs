@@ -32,6 +32,9 @@ impl RsaProfile {
         if bigint::is_zero(&modulus) {
             return Err(Error::ModulusZero);
         }
+        if modulus[0] % 2 == 0 {
+            return Err(Error::ModulusZero);
+        }
         let mut private_exponent_be = d_le.to_vec();
         private_exponent_be.reverse();
         Ok(Self {

@@ -45,7 +45,7 @@ pub fn scan_tree(root: &Path, on_progress: &mut dyn FnMut(usize)) -> ScanResult 
             let path = entry.path();
             let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
 
-            if size as usize > aac::PAYLOAD_OFFSET
+            if size > aac::PAYLOAD_OFFSET as u64
                 && let Some(header) = read_header(path, 20)
                 && aac::header_is_aac(&header)
             {

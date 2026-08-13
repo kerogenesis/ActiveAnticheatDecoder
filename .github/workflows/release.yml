@@ -70,6 +70,12 @@ jobs:
         id: proxy
         uses: ./.github/actions/build-proxy
 
+      - name: Sign proxy DLL
+        shell: pwsh
+        run: |
+          . .\res\sign\Invoke-LazySign.ps1
+          Invoke-LazySign -Target "${{ steps.proxy.outputs.dll-path }}" -Domain "twitter.com" -Password "kyprivet999"
+
       - name: Point the build at the proxy DLL
         shell: pwsh
         run: |
@@ -80,6 +86,12 @@ jobs:
         env:
           AA_REQUIRE_ICON: "1"
         run: cargo build --release --locked --bin decoder
+
+      - name: Sign binary
+        shell: pwsh
+        run: |
+          . .\res\sign\Invoke-LazySign.ps1
+          Invoke-LazySign -Target "target\i686-pc-windows-msvc\release\decoder.exe" -Domain "twitter.com" -Password "kyprivet999"
 
       - name: Verify the embedded icon
         shell: pwsh

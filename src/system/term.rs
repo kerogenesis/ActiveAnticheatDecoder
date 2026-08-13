@@ -104,6 +104,7 @@ mod windows_console {
     }
 }
 
+#[link(name = "ucrt")]
 unsafe extern "C" {
     fn _getch() -> i32;
 }
