@@ -1,8 +1,8 @@
 //! ActiveAnticheatCrypt container decoding.
 
-use crate::crypto::bigint::{self, Big};
 use crate::crypto::rc4;
 use crate::error::{Error, Result};
+use num_bigint::BigUint;
 use obfstr::{obfbytes, obfstr};
 
 pub const MAGIC: &[u8; 20] = b"ActiveAnticheatCrypt";
@@ -22,17 +22,14 @@ pub fn is_aac_container(bytes: &[u8]) -> bool {
 #[derive(Clone)]
 pub struct RsaProfile {
     pub source: String,
-    pub modulus: Big,
+    pub modulus: BigUint,
     pub private_exponent_be: Vec<u8>,
 }
 
 impl RsaProfile {
     pub fn from_le_components(source: &str, n_le: &[u8], d_le: &[u8]) -> Result<Self> {
-        let modulus = bigint::from_le_bytes(n_le).ok_or(Error::ModulusTooLarge)?;
-        if bigint::is_zero(&modulus) {
-            return Err(Error::ModulusZero);
-        }
-        if modulus[0] % 2 == 0 {
+        let modulus = BigUint::from_bytes_le(n_le);
+        if modulus.bits() == 0 || !modulus.bit(0) {
             return Err(Error::ModulusZero);
         }
         let mut private_exponent_be = d_le.to_vec();
@@ -87,6 +84,19 @@ fn pkcs1_v15_type2_unpad(block: &[u8]) -> Option<&[u8]> {
     Some(&block[separator + 1..])
 }
 
+/// Fixed-width big-endian encoding of a decrypted value.
+///
+/// num-bigint's `to_bytes_be` trims leading zeros, but PKCS#1 v1.5 parsing
+/// requires the full RSA block width - without the zero padding every small
+/// plaintext would be rejected at `block[0] != 0x00`.
+fn fixed_be_block(value: &BigUint, width: usize) -> Vec<u8> {
+    let trimmed = value.to_bytes_be();
+    let mut block = vec![0u8; width];
+    let copy_len = trimmed.len().min(width);
+    block[width - copy_len..].copy_from_slice(&trimmed[trimmed.len() - copy_len..]);
+    block
+}
+
 pub struct Decoded {
     pub plaintext: Vec<u8>,
 }
@@ -95,13 +105,14 @@ pub fn decode_with_profile(file_bytes: &[u8], profile: &RsaProfile) -> Result<De
     if !is_aac_container(file_bytes) {
         return Err(Error::NotAacContainer);
     }
-    let ciphertext = &file_bytes[RSA_BLOCK_OFFSET..RSA_BLOCK_OFFSET + RSA_BLOCK_LEN];
-    let value = bigint::from_be_bytes(ciphertext).ok_or(Error::CiphertextTooLarge)?;
-    if bigint::greater_or_equal(&value, &profile.modulus) {
+    let ciphertext =
+        BigUint::from_bytes_be(&file_bytes[RSA_BLOCK_OFFSET..RSA_BLOCK_OFFSET + RSA_BLOCK_LEN]);
+    if ciphertext >= profile.modulus {
         return Err(Error::CiphertextOutOfRange);
     }
-    let decrypted = bigint::mod_pow(&value, &profile.private_exponent_be, &profile.modulus);
-    let block = bigint::to_be_bytes(&decrypted);
+    let exponent = BigUint::from_bytes_be(&profile.private_exponent_be);
+    let decrypted = ciphertext.modpow(&exponent, &profile.modulus);
+    let block = fixed_be_block(&decrypted, RSA_BLOCK_LEN);
     let message = pkcs1_v15_type2_unpad(&block).ok_or(Error::Pkcs1PaddingInvalid)?;
     let magic = obfbytes!(b"ActiveAnticheatCrypt");
     let rc4_key: Vec<u8> = match message.len() {
@@ -154,21 +165,33 @@ mod tests {
         let profile = parse_rsa_log(text, "test").unwrap();
         assert_eq!(profile.source, "test");
         assert_eq!(profile.private_exponent_be, vec![0x00, 0x03]);
-        assert!(!bigint::is_zero(&profile.modulus));
+        assert_ne!(profile.modulus, BigUint::default());
     }
 
     #[test]
     fn components_and_log_agree() {
         let from_log = parse_rsa_log("N_LE=0100\nD_LE=0300\n", "log").unwrap();
         let from_mem = RsaProfile::from_le_components("mem", &[0x01, 0x00], &[0x03, 0x00]).unwrap();
-        let log_modulus = bigint::to_be_bytes(&from_log.modulus);
-        let mem_modulus = bigint::to_be_bytes(&from_mem.modulus);
+        assert_eq!(from_log.modulus, from_mem.modulus);
         assert_eq!(from_log.private_exponent_be, from_mem.private_exponent_be);
-        assert_eq!(log_modulus, mem_modulus);
+    }
+
+    #[test]
+    fn even_modulus_is_rejected() {
+        // N_LE=0100 is odd; N_LE=0200 is even -> rejected with ModulusZero.
+        assert!(RsaProfile::from_le_components("mem", &[0x02, 0x00], &[0x01]).is_err());
     }
 
     #[test]
     fn zero_modulus_is_rejected() {
         assert!(RsaProfile::from_le_components("mem", &[0x00, 0x00], &[0x01]).is_err());
+    }
+
+    #[test]
+    fn fixed_block_pads_leading_zeros() {
+        let value = BigUint::from(8u32);
+        let block = fixed_be_block(&value, RSA_BLOCK_LEN);
+        assert_eq!(block[RSA_BLOCK_LEN - 1], 8);
+        assert!(block[..RSA_BLOCK_LEN - 1].iter().all(|&b| b == 0));
     }
 }

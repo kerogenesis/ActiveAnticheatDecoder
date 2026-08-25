@@ -1,4 +1,8 @@
 //! Runtime configuration read from `config.ini` next to the executable.
+//!
+//! A missing file or key falls back to built-in defaults:
+//! * `proxy_name` = `ddraw.dll`
+//! * `scryde_gamekitdata_auto_decode` = `true`
 use obfstr::obfstr;
 use std::collections::HashSet;
 use std::path::Path;
@@ -34,10 +38,10 @@ fn candidates_from(configured: Option<String>) -> Vec<String> {
     if let Some(name) = configured {
         names.push(with_dll_extension(&name));
     }
-    names.push(obfstr!("WindowsCodecs.dll").to_owned());
     names.push(obfstr!("ddraw.dll").to_owned());
     names.push(obfstr!("xinput1_4.dll").to_owned());
     names.push(obfstr!("RESAMPLEDMO.dll").to_owned());
+    names.push(obfstr!("WindowsCodecs.dll").to_owned());
 
     let mut seen = HashSet::new();
     names.retain(|name| seen.insert(name.to_ascii_lowercase()));
@@ -47,8 +51,9 @@ fn candidates_from(configured: Option<String>) -> Vec<String> {
 pub fn proxy_candidates(config_path: &Path) -> Vec<String> {
     let configured = std::fs::read_to_string(config_path)
         .ok()
-        .and_then(|text| parse_ini_key(&text, obfstr!("proxy_name")));
-    candidates_from(configured)
+        .and_then(|text| parse_ini_key(&text, obfstr!("proxy_name")))
+        .unwrap_or_else(|| obfstr!("ddraw.dll").to_owned());
+    candidates_from(Some(configured))
 }
 
 pub fn scryde_gamekitdata_auto_decode(config_path: &Path) -> bool {
@@ -71,10 +76,21 @@ mod tests {
     }
 
     #[test]
-    fn default_candidates_lead_with_windowscodecs() {
+    fn default_candidates_end_with_windowscodecs() {
         let names = candidates_from(None);
         assert_eq!(names.len(), 4);
-        assert_eq!(names[0], "WindowsCodecs.dll");
+        assert_eq!(names[0], "ddraw.dll");
+        assert_eq!(*names.last().unwrap(), "WindowsCodecs.dll");
+    }
+
+    #[test]
+    fn missing_config_file_defaults_to_ddraw_first() {
+        let missing = std::env::temp_dir().join("aac-decoder-missing-config-test.ini");
+        let _ = std::fs::remove_file(&missing);
+        let names = proxy_candidates(&missing);
+        assert_eq!(names[0], "ddraw.dll");
+        assert_eq!(*names.last().unwrap(), "WindowsCodecs.dll");
+        assert_eq!(names.len(), 4);
     }
 
     #[test]

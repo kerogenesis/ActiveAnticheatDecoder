@@ -58,9 +58,6 @@ pub enum Error {
     )]
     ProtectedEnvironment { override_name: String },
 
-    #[error("modulus larger than 2048 bits")]
-    ModulusTooLarge,
-
     #[error("modulus is zero")]
     ModulusZero,
 
@@ -69,9 +66,6 @@ pub enum Error {
 
     #[error("not an ActiveAnticheatCrypt container")]
     NotAacContainer,
-
-    #[error("ciphertext too large")]
-    CiphertextTooLarge,
 
     #[error("ciphertext is not smaller than the modulus")]
     CiphertextOutOfRange,

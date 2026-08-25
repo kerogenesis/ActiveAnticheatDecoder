@@ -268,7 +268,7 @@ fn decrypt_413(payload: &[u8]) -> Result<Vec<u8>> {
         for bf_key in bf_keys {
             if let Ok(cipher) = blowfish::Blowfish::<byteorder::BE>::new_from_slice(bf_key) {
                 let mut decrypted = aligned_payload.to_vec();
-                for chunk in decrypted.chunks_exact_mut(8) {
+                for chunk in decrypted.as_chunks_mut::<8>().0 {
                     let mut block = cipher::Block::<blowfish::Blowfish<byteorder::BE>>::default();
                     block.copy_from_slice(chunk);
                     cipher::BlockCipherDecrypt::decrypt_block(&cipher, &mut block);

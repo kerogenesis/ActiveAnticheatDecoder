@@ -1,4 +1,4 @@
-//! Decoder for Lineage 2 client files.
+//! Decryptor for ActiveAnticheatCrypt files.
 
 #![cfg_attr(not(test), windows_subsystem = "windows")]
 

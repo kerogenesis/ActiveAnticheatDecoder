@@ -38,8 +38,41 @@ pub fn executable_directory() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(obfstr!(".")))
 }
 
+/// Excel-style letter increment
+fn increment_letters(current: &str) -> String {
+    let mut bytes: Vec<u8> = current.bytes().collect();
+    let mut carry = true;
+    for byte in bytes.iter_mut().rev() {
+        if *byte == b'Z' {
+            *byte = b'A';
+        } else {
+            *byte += 1;
+            carry = false;
+            break;
+        }
+    }
+    if carry {
+        bytes.insert(0, b'A');
+    }
+    String::from_utf8(bytes).unwrap_or_else(|_| obfstr!("A").to_owned())
+}
+
+fn resolve_project_folder(parent: &Path, project: &str, date: &str) -> PathBuf {
+    let mut suffix = String::from("A");
+    loop {
+        let candidate = parent.join(format!("{project}{suffix}_{date}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+        suffix = increment_letters(&suffix);
+    }
+}
+
 pub fn output_root() -> PathBuf {
-    executable_directory().join(format!("{}_{}", obfstr!("clean_files"), today_stamp()))
+    let mut root = executable_directory();
+    root.push(obfstr!("clean_files"));
+    let date = today_stamp();
+    resolve_project_folder(&root, obfstr!("Project"), &date)
 }
 
 pub fn relative(path: &Path, base: &Path) -> String {
@@ -136,5 +169,25 @@ mod tests {
     fn silent_legacy_output_sits_next_to_the_exe() {
         let name = legacy_name(Path::new("D:/downloads/ft_1223859.dat"), "_clean.txt");
         assert_eq!(name, "ft_1223859_clean.txt");
+    }
+
+    #[test]
+    fn letters_increment_excel_style() {
+        assert_eq!(increment_letters("A"), "B");
+        assert_eq!(increment_letters("Z"), "AA");
+        assert_eq!(increment_letters("AZ"), "BA");
+        assert_eq!(increment_letters("ZZ"), "AAA");
+    }
+
+    #[test]
+    fn taken_folder_bumps_the_letter_suffix() {
+        let parent = std::env::temp_dir().join("aac-decoder-output-test");
+        fs::create_dir_all(&parent).unwrap();
+        let first = resolve_project_folder(&parent, "Project", "01_01_2025");
+        assert!(first.ends_with("ProjectA_01_01_2025"));
+        fs::create_dir_all(&first).unwrap();
+        let second = resolve_project_folder(&parent, "Project", "01_01_2025");
+        assert!(second.ends_with("ProjectB_01_01_2025"));
+        let _ = fs::remove_dir_all(&parent);
     }
 }
