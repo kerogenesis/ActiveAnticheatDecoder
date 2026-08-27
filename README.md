@@ -8,7 +8,7 @@
   <img src="https://img.shields.io/badge/license-MIT-blue">
 </p>
 
-<p align="center">Some people are still selling decoders for this AnTiChEaT system. It looks ridiculous, doesn't it? :)</p>
+<p align="center">Some people are still selling decrypters for this AnTiChEaT system. It looks ridiculous, doesn't it? :)</p>
 
 ### Features
 

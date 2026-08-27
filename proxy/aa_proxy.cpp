@@ -1,11 +1,9 @@
-// aa_proxy: the dll the Lineage 2 client loads from its own `system` folder.
+// Lineage 2 client loads this dll from its own `system` folder.
 //
-// UltimateProxyDLL forwards every export to the real system DLL, so the client
-// keeps working while our code runs alongside it -- one built DLL proxies any
-// of the supported names just by being renamed, no rebuild required. On top of
+// ProxyDLL forwards every export to the real system DLL. On top of
 // that we spawn one thread that scans the client for the live
 // ActiveAnticheatCrypt RSA context and hands the (modulus, private exponent)
-// back to aa-decoder over a named pipe. Nothing is ever written to disk.
+// back to decoder over a named pipe.
 
 #include <Windows.h>
 
@@ -18,7 +16,7 @@
 namespace {
 
 constexpr SIZE_T kContextSize = 0x78;
-constexpr SIZE_T kChunkSize = 1024u * 1024u;
+constexpr SIZE_T kChunkSize = 4u * 1024u * 1024u;
 constexpr SIZE_T kOverlap = kContextSize - 1;
 constexpr SIZE_T kMaxRegionSize = 128u * 1024u * 1024u;
 constexpr SIZE_T kMaxMpiBytes = 256;
@@ -40,7 +38,7 @@ uint32_t ReadU32(const uint8_t* p, size_t at) {
            (static_cast<uint32_t>(p[at + 2]) << 16) | (static_cast<uint32_t>(p[at + 3]) << 24);
 }
 
-// Read `len` bytes from our own process, all or nothing.
+// Read `len` bytes from our own process.
 bool ReadExact(uintptr_t address, uint8_t* out, size_t len) {
     SIZE_T read = 0;
     return ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<LPCVOID>(address), out, len,
@@ -162,7 +160,6 @@ std::string ToHex(const std::vector<uint8_t>& bytes) {
     return out;
 }
 
-// Best-effort: a missing pipe just means nobody is listening.
 void SendKey(const RsaKey& key) {
     wchar_t name[256];
     DWORD len = GetEnvironmentVariableW(L"AA_DECODER_PIPE", name, 256);
@@ -181,14 +178,14 @@ void SendKey(const RsaKey& key) {
 
 DWORD WINAPI CaptureThread(LPVOID) {
     // The RSA context only exists once the client has finished start-up, so the
-    // first sweeps usually miss; poll quickly early, then back off.
-    for (int attempt = 0; attempt < 12; ++attempt) {
+    // first sweeps usually miss; poll with tight interval to avoid worst-case.
+    for (int attempt = 0; attempt < 60; ++attempt) {
         RsaKey key;
         if (FindRsaKey(key)) {
             SendKey(key);
             return 0;
         }
-        Sleep(attempt < 4 ? 1000 : 5000);
+        Sleep(200);
     }
     return 0;
 }

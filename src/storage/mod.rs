@@ -1,3 +1,4 @@
+pub mod cache;
 pub mod fsutil;
 pub mod output;
 pub mod scan;

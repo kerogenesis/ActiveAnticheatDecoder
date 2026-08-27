@@ -13,10 +13,10 @@ use crate::client::{config, resolve_client_layout};
 use crate::error::{Error, IoAction, Result};
 use crate::format::{aac, gamekit, manifest};
 use crate::protection::capture;
-use crate::storage::{output, scan};
+use crate::storage::{cache, output, scan};
 use crate::system::term;
 
-const CAPTURE_TIMEOUT: Duration = Duration::from_secs(120);
+const CAPTURE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The C++ proxy DLL, embedded at build time (see build.rs).
 const PROXY_DLL: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/aa_proxy.dll"));
@@ -89,27 +89,35 @@ pub fn run_scan(picked: &Path, interactive: bool) {
     let auto_decode_gamekit =
         layout.is_scryde() && config::scryde_gamekitdata_auto_decode(&config_path);
 
-    let outcome = {
-        let mut spinner = term::Spinner::new(obfstr!("capturing key"));
-        let result = capture::capture_key(
-            system_dir,
-            &layout.executable,
-            &candidates,
-            PROXY_DLL,
-            CAPTURE_TIMEOUT,
-            &mut || spinner.spin(),
-        );
-        spinner.finish();
-        result
-    };
-
-    let profile = match outcome {
-        Ok(profile) => profile,
-        Err(error) => {
-            term::field_line("+ Status:", &format!("Key capture failed: {error}"));
-            finish(interactive);
-            return;
-        }
+    // try cached key first
+    let profile = if let Some(cached) = cache::load_cached_profile(system_dir, &layout.executable) {
+        term::field_line("+ Key:", obfstr!("from cache"));
+        cached
+    } else {
+        let outcome = {
+            let mut spinner = term::Spinner::new(obfstr!("capturing key"));
+            let result = capture::capture_key(
+                system_dir,
+                &layout.executable,
+                &candidates,
+                PROXY_DLL,
+                CAPTURE_TIMEOUT,
+                &mut || spinner.spin(),
+            );
+            spinner.finish();
+            result
+        };
+        let profile = match outcome {
+            Ok(profile) => profile,
+            Err(error) => {
+                term::field_line("+ Status:", &format!("Key capture failed: {error}"));
+                finish(interactive);
+                return;
+            }
+        };
+        cache::save_cached_profile(system_dir, &layout.executable, &profile);
+        term::field_line("+ Key:", obfstr!("captured live, cached for next run"));
+        profile
     };
 
     let mut spinner = term::Spinner::new(obfstr!("scanning tree"));
