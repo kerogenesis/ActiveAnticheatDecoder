@@ -2,8 +2,7 @@
 
 use obfstr::obfstr;
 use std::io::{self, IsTerminal, Write};
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy)]
@@ -30,7 +29,7 @@ const RESET: &str = "\x1b[0m";
 const SPINNER_FRAMES: [&str; 4] = ["|", "/", "-", "\\"];
 const SPINNER_INTERVAL: Duration = Duration::from_millis(80);
 
-static STYLED: AtomicBool = AtomicBool::new(false);
+static STYLED: OnceLock<bool> = OnceLock::new();
 static CONSOLE_MUTEX: Mutex<()> = Mutex::new(());
 
 mod windows_console {
@@ -129,7 +128,7 @@ pub fn ensure_console() {
     windows_console::ensure();
     let interactive = io::stdout().is_terminal();
     let styled = interactive && windows_console::enable_ansi();
-    STYLED.store(styled, Ordering::Relaxed);
+    let _ = STYLED.set(styled);
 }
 
 pub fn owns_console() -> bool {
@@ -137,7 +136,7 @@ pub fn owns_console() -> bool {
 }
 
 fn styled() -> bool {
-    STYLED.load(Ordering::Relaxed)
+    *STYLED.get().unwrap_or(&false)
 }
 
 fn paint(colour: Color, text: &str) -> String {

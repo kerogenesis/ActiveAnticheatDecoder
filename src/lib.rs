@@ -19,11 +19,11 @@
 #![allow(clippy::implicit_clone)]
 #![allow(clippy::format_collect)]
 
+pub mod capture;
 pub mod client;
 pub mod crypto;
 pub mod error;
 pub mod format;
-pub mod protection;
 pub mod run;
 pub mod storage;
 pub mod system;

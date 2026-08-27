@@ -88,11 +88,11 @@ pub fn mirrored_path(root: &Path, source: &Path, output_root: &Path) -> PathBuf 
 pub fn output_path_for(root: &Path, source: &Path, output_root: &Path, suffix: &str) -> PathBuf {
     let relative = source.strip_prefix(root).unwrap_or(source);
     let mut destination = output_root.join(relative);
-    destination.set_file_name(legacy_name(source, suffix));
+    destination.set_file_name(hash_manifest_name(source, suffix));
     destination
 }
 
-pub fn legacy_name(source: &Path, suffix: &str) -> String {
+pub fn hash_manifest_name(source: &Path, suffix: &str) -> String {
     let stem = source
         .file_stem()
         .map(|value| value.to_string_lossy().into_owned())
@@ -100,9 +100,9 @@ pub fn legacy_name(source: &Path, suffix: &str) -> String {
     format!("{stem}{suffix}")
 }
 
-pub fn is_legacy_path(path: &Path) -> bool {
+pub fn is_hash_manifest_path(path: &Path) -> bool {
     path.file_name()
-        .map(|value| manifest::is_legacy_name(&value.to_string_lossy()))
+        .map(|value| manifest::is_hash_manifest_name(&value.to_string_lossy()))
         .unwrap_or(false)
 }
 
@@ -155,16 +155,16 @@ mod tests {
     }
 
     #[test]
-    fn dropped_legacy_file_is_routed_by_name() {
-        assert!(manifest::is_legacy_name("ft_12.dat"));
-        assert!(!manifest::is_legacy_name("armorgrp.dat"));
-        assert!(is_legacy_path(Path::new("D:/downloads/FT_1223859.dat")));
-        assert!(!is_legacy_path(Path::new("D:/client/system/armorgrp.dat")));
+    fn dropped_hash_manifest_file_is_routed_by_name() {
+        assert!(manifest::is_hash_manifest_name("ft_12.dat"));
+        assert!(!manifest::is_hash_manifest_name("armorgrp.dat"));
+        assert!(is_hash_manifest_path(Path::new("D:/downloads/FT_1223859.dat")));
+        assert!(!is_hash_manifest_path(Path::new("D:/client/system/armorgrp.dat")));
     }
 
     #[test]
-    fn silent_legacy_output_sits_next_to_the_exe() {
-        let name = legacy_name(Path::new("D:/downloads/ft_1223859.dat"), "_clean.txt");
+    fn silent_hash_manifest_output_sits_next_to_the_exe() {
+        let name = hash_manifest_name(Path::new("D:/downloads/ft_1223859.dat"), "_clean.txt");
         assert_eq!(name, "ft_1223859_clean.txt");
     }
 

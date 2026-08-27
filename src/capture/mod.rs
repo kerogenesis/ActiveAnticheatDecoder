@@ -1,6 +1,5 @@
-//! Anti-analysis speed bumps for the protected release build.
-
-pub mod capture;
+pub mod acquire;
+pub mod live;
 
 pub mod strings {
     use obfstr::obfstr;

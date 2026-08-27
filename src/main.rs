@@ -38,12 +38,12 @@ fn main() {
             missing.push(path);
         }
     }
-    let silent_legacy_drop = !files.is_empty()
+    let hash_manifest_drop = !files.is_empty()
         && directories.is_empty()
         && missing.is_empty()
-        && files.iter().all(|path| output::is_legacy_path(path));
-    if silent_legacy_drop {
-        run::run_silent_legacy_files(&files);
+        && files.iter().all(|path| output::is_hash_manifest_path(path));
+    if hash_manifest_drop {
+        run::run_hash_manifest_files(&files);
         return;
     }
     term::ensure_console();

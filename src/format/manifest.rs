@@ -1,20 +1,20 @@
-//! Legacy `ft_*` path: static-key RC4 over a binary manifest.
+//! Hash manifest `ft_*` path: static-key RC4 over a binary manifest.
 
 use crate::crypto::{hex::to_hex, rc4, sha1};
 use crate::error::{Error, Result};
 use obfstr::obfstr;
 use std::fmt::Write as _;
 
-pub const KEY_SEED: [u8; 24] = [
+pub const HASH_MANIFEST_KEY_SEED: [u8; 24] = [
     0x91, 0x12, 0x24, 0xf2, 0xe9, 0xe2, 0x91, 0x12, 0x24, 0xf2, 0xf8, 0xe2, 0x91, 0x12, 0x24, 0xf2,
     0xe9, 0xe2, 0x91, 0x12, 0x24, 0xf2, 0xe9, 0xe2,
 ];
 
-pub fn legacy_key() -> [u8; 20] {
-    sha1::digest(&KEY_SEED)
+pub fn hash_manifest_key() -> [u8; 20] {
+    sha1::digest(&HASH_MANIFEST_KEY_SEED)
 }
 
-pub fn is_legacy_name(file_name: &str) -> bool {
+pub fn is_hash_manifest_name(file_name: &str) -> bool {
     let prefix = obfstr!("ft_").to_owned();
     file_name.len() >= prefix.len() && file_name[..prefix.len()].eq_ignore_ascii_case(&prefix)
 }
@@ -118,7 +118,7 @@ pub fn format(manifest: &Manifest) -> String {
 }
 
 pub fn decode(file_bytes: &[u8]) -> Result<String> {
-    let plain = rc4::crypt(file_bytes, &legacy_key());
+    let plain = rc4::crypt(file_bytes, &hash_manifest_key());
     let manifest = parse(&plain)?;
     Ok(format(&manifest))
 }
@@ -130,7 +130,7 @@ mod tests {
     #[test]
     fn key_matches_the_known_constant() {
         assert_eq!(
-            legacy_key(),
+            hash_manifest_key(),
             [
                 0x10, 0x30, 0xab, 0xed, 0x06, 0x5a, 0x2f, 0xaf, 0xe7, 0x1c, 0x6b, 0x83, 0x6d, 0xbb,
                 0x28, 0x35, 0x6e, 0x0c, 0x62, 0x54
@@ -140,10 +140,10 @@ mod tests {
 
     #[test]
     fn recognises_prefix_case_insensitively() {
-        assert!(is_legacy_name("ft_1.dat"));
-        assert!(is_legacy_name("FT_99.dat"));
-        assert!(!is_legacy_name("armorgrp.dat"));
-        assert!(!is_legacy_name("ft"));
+        assert!(is_hash_manifest_name("ft_1.dat"));
+        assert!(is_hash_manifest_name("FT_99.dat"));
+        assert!(!is_hash_manifest_name("armorgrp.dat"));
+        assert!(!is_hash_manifest_name("ft"));
     }
 
     fn build_manifest() -> Vec<u8> {
@@ -171,7 +171,7 @@ mod tests {
 
     #[test]
     fn round_trips_through_rc4() {
-        let encrypted = rc4::crypt(&build_manifest(), &legacy_key());
+        let encrypted = rc4::crypt(&build_manifest(), &hash_manifest_key());
         let text = decode(&encrypted).unwrap();
         assert!(text.contains("system/l2.exe"));
     }

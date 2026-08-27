@@ -1,6 +1,3 @@
-//! SHA-1 via `sha1` crate — replaces former hand-rolled implementation.
-//! Kept as thin wrapper so call sites (`legacy_key()`, cache hash) stay simple.
-
 use sha1::{Digest, Sha1};
 
 pub fn digest(data: &[u8]) -> [u8; 20] {

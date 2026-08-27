@@ -1,7 +1,5 @@
 use std::fmt::Write as _;
 
-/// Decode even-length lowercase/uppercase hex to bytes.
-/// Returns `None` on odd length or non-hex digit.
 pub fn hex_to_bytes(text: &str) -> Option<Vec<u8>> {
     if text.is_empty() || text.len() % 2 != 0 {
         return None;

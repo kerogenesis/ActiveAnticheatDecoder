@@ -1,6 +1,3 @@
-//! The three ways the decoder is driven: a folder scan, dropped files, and the
-//! silent `ft_*` fast path. Everything here is orchestration.
-
 use obfstr::obfstr;
 use rayon::prelude::*;
 use std::fs;
@@ -9,11 +6,11 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
+use crate::capture::acquire::acquire_profile;
 use crate::client::{config, resolve_client_layout};
 use crate::error::{Error, IoAction, Result};
-use crate::format::{aac, gamekit, manifest};
-use crate::protection::capture;
-use crate::storage::{cache, output, scan};
+use crate::format::{aac, decode as fmt_decode, manifest};
+use crate::storage::{output, scan};
 use crate::system::term;
 
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -25,38 +22,6 @@ const PROXY_DLL: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/aa_proxy.dll"
 struct Outcome {
     clean_paths: Vec<PathBuf>,
     failures: Vec<(PathBuf, Error)>,
-}
-
-fn decode_aac_file(
-    path: &Path,
-    bytes: &[u8],
-    profiles: &[aac::RsaProfile],
-    root: &Path,
-    output_root: &Path,
-    auto_decode_gamekit: bool,
-) -> Result<PathBuf> {
-    let decoded = aac::decode_any(bytes, profiles)?;
-    let destination = output::mirrored_path(root, path, output_root);
-    let mut plaintext = decoded.plaintext;
-
-    if auto_decode_gamekit && let Some(lineage2_bytes) = gamekit::convert_to_lineage2(&plaintext) {
-        plaintext = lineage2_bytes;
-    }
-
-    output::write_output(&destination, &plaintext)?;
-    Ok(destination)
-}
-
-fn decode_legacy_file(
-    path: &Path,
-    bytes: &[u8],
-    root: &Path,
-    output_root: &Path,
-) -> Result<PathBuf> {
-    let text = manifest::decode(bytes)?;
-    let destination = output::output_path_for(root, path, output_root, obfstr!("_clean.txt"));
-    output::write_output(&destination, text.as_bytes())?;
-    Ok(destination)
 }
 
 pub fn finish(interactive: bool) {
@@ -87,35 +52,20 @@ pub fn run_scan(picked: &Path, interactive: bool) {
     let auto_decode_gamekit =
         layout.is_scryde() && config::scryde_gamekitdata_auto_decode(&config_path);
 
-    // try cached key first
-    let profile = if let Some(cached) = cache::load_cached_profile(system_dir, &layout.executable) {
-        term::field_line("+ Key:", obfstr!("from cache"));
-        cached
-    } else {
-        let outcome = {
-            let mut spinner = term::Spinner::new(obfstr!("capturing key"));
-            let result = capture::capture_key(
-                system_dir,
-                &layout.executable,
-                &candidates,
-                PROXY_DLL,
-                CAPTURE_TIMEOUT,
-                &mut || spinner.spin(),
-            );
-            spinner.finish();
-            result
-        };
-        let profile = match outcome {
-            Ok(profile) => profile,
-            Err(error) => {
-                term::field_line("+ Status:", &format!("Key capture failed: {error}"));
-                finish(interactive);
-                return;
-            }
-        };
-        cache::save_cached_profile(system_dir, &layout.executable, &profile);
-        term::field_line("+ Key:", obfstr!("captured live, cached for next run"));
-        profile
+    // cache -> live injection
+    let profile = match acquire_profile(
+        system_dir,
+        &layout.executable,
+        &candidates,
+        PROXY_DLL,
+        CAPTURE_TIMEOUT,
+    ) {
+        Ok(p) => p,
+        Err(error) => {
+            term::field_line("+ Status:", &format!("Key capture failed: {error}"));
+            finish(interactive);
+            return;
+        }
     };
 
     let mut spinner = term::Spinner::new(obfstr!("scanning tree"));
@@ -151,7 +101,14 @@ pub fn run_scan(picked: &Path, interactive: bool) {
         let decoded = fs::read(source)
             .map_err(|source_err| Error::io(IoAction::Read, source, source_err))
             .and_then(|bytes| {
-                decode_aac_file(source, &bytes, &profiles, root, &output_root, auto_decode_gamekit)
+                fmt_decode::decode_aac_file(
+                    source,
+                    &bytes,
+                    &profiles,
+                    root,
+                    &output_root,
+                    auto_decode_gamekit,
+                )
             });
 
         let current_step = completed_counter.fetch_add(1, Ordering::SeqCst) + 1;
@@ -192,8 +149,8 @@ fn decode_dropped_file(path: &Path, name: &str, output_root: &Path) -> Result<Pa
     let bytes = fs::read(path).map_err(|source| Error::io(IoAction::Read, path, source))?;
     let root = path.parent().unwrap_or(Path::new(""));
 
-    if manifest::is_legacy_name(name) {
-        return decode_legacy_file(path, &bytes, root, output_root);
+    if manifest::is_hash_manifest_name(name) {
+        return fmt_decode::decode_hash_manifest_file(path, &bytes, root, output_root);
     }
 
     if aac::is_aac_container(&bytes) {
@@ -252,13 +209,13 @@ pub fn run_dropped_files(paths: &[PathBuf]) {
     finish(true);
 }
 
-pub fn run_silent_legacy_files(paths: &[PathBuf]) {
+pub fn run_hash_manifest_files(paths: &[PathBuf]) {
     let destination_root = output::executable_directory();
     let failures_mutex = Mutex::new(Vec::new());
     let suffix = obfstr!("_clean.txt").to_owned();
 
     paths.par_iter().for_each(|path| {
-        let destination = destination_root.join(output::legacy_name(path, &suffix));
+        let destination = destination_root.join(output::hash_manifest_name(path, &suffix));
 
         let decoded = fs::read(path)
             .map_err(|source| Error::io(IoAction::Read, path, source))

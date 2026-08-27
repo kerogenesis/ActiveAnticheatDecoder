@@ -1,4 +1,4 @@
-//! Plain RC4. Shared by the legacy `ft_*` path and the AAC payload path.
+//! Plain RC4. Shared by the Hash manifest `ft_*` path and the AAC payload path.
 
 pub fn crypt_in_place(data: &mut [u8], key: &[u8]) {
     assert!(!key.is_empty(), "RC4 key must not be empty");

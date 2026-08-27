@@ -1,4 +1,4 @@
-//! Resolving the Lineage 2 client layout from a folder the user points at.
+//! Resolving the L2 client layout from a folder the user points at.
 
 use camino::{Utf8Path, Utf8PathBuf};
 use obfstr::obfstr;
