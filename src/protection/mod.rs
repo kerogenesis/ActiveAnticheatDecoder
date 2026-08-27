@@ -33,10 +33,8 @@ pub mod noise {
         let mut state = std::hint::black_box(tag ^ 0x9E37_79B9);
         let rounds = 5 + (state & 7);
         for round in 0..rounds {
-            state = state
-                .rotate_left(5)
-                .wrapping_mul(0x045D_9F3B)
-                .wrapping_add(round ^ 0xA5A5_5A5A);
+            state =
+                state.rotate_left(5).wrapping_mul(0x045D_9F3B).wrapping_add(round ^ 0xA5A5_5A5A);
             let selector = std::hint::black_box(state) & 1;
             let mask = 0u32.wrapping_sub(selector);
             state ^= mask & round.wrapping_mul(0x27D4_EB2D);
@@ -63,9 +61,7 @@ pub mod runtime {
 
         let score = debugger_score();
         if score >= DEBUGGER_THRESHOLD {
-            return Err(Error::ProtectedEnvironment {
-                override_name: strings::allow_debug_env(),
-            });
+            return Err(Error::ProtectedEnvironment { override_name: strings::allow_debug_env() });
         }
         Ok(())
     }
@@ -75,10 +71,7 @@ pub mod runtime {
         let Some(value) = std::env::var_os(OsStr::new(&key)) else {
             return false;
         };
-        matches!(
-            value.to_string_lossy().as_ref(),
-            "1" | "true" | "TRUE" | "yes" | "YES"
-        )
+        matches!(value.to_string_lossy().as_ref(), "1" | "true" | "TRUE" | "yes" | "YES")
     }
 
     #[cfg(windows)]
@@ -114,9 +107,7 @@ pub mod runtime {
         let mut value = 0x6A09_E667u32;
         for round in 0..20_000u32 {
             value = std::hint::black_box(
-                value
-                    .rotate_left((round & 15) + 1)
-                    .wrapping_add(round ^ 0xBB67_AE85),
+                value.rotate_left((round & 15) + 1).wrapping_add(round ^ 0xBB67_AE85),
             );
         }
         std::hint::black_box(value);

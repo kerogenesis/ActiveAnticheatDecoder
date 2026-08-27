@@ -68,10 +68,7 @@ fn remove_proxy(path: &Path) {
 }
 
 fn now_millis() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|value| value.as_millis())
-        .unwrap_or(0)
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|value| value.as_millis()).unwrap_or(0)
 }
 
 pub fn capture_key(
@@ -86,9 +83,7 @@ pub fn capture_key(
         return Err(Error::ProxyDllMissing);
     }
     if !system_dir.is_dir() {
-        return Err(Error::NoSystemFolder {
-            path: system_dir.to_path_buf(),
-        });
+        return Err(Error::NoSystemFolder { path: system_dir.to_path_buf() });
     }
     let client = system_dir.join(client_exe);
     if !client.is_file() {
@@ -156,10 +151,7 @@ fn capture(
     }
     let job_raw = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
     let job = OwnedHandle::from_raw(job_raw);
-    let job_handle = job
-        .as_ref()
-        .map(OwnedHandle::as_raw)
-        .unwrap_or(std::ptr::null_mut());
+    let job_handle = job.as_ref().map(OwnedHandle::as_raw).unwrap_or(std::ptr::null_mut());
     let (process, main_thread) = match launch_suspended(client, cwd, job_handle) {
         Ok(pair) => pair,
         Err(error) => {
@@ -172,9 +164,7 @@ fn capture(
     unsafe {
         SetEnvironmentVariableW(env_name.as_ptr(), std::ptr::null());
     }
-    let job_bits = job
-        .map(OwnedHandle::into_raw)
-        .unwrap_or(std::ptr::null_mut()) as usize;
+    let job_bits = job.map(OwnedHandle::into_raw).unwrap_or(std::ptr::null_mut()) as usize;
     JOB_HANDLE.store(job_bits, Ordering::SeqCst);
     let (tx, rx) = mpsc::channel::<Vec<u8>>();
     thread::spawn(move || {
@@ -228,11 +218,7 @@ fn capture(
         }
     }
     let job_to_close = JOB_HANDLE.swap(0, Ordering::SeqCst);
-    let job = if job_to_close != 0 {
-        OwnedHandle::from_raw(job_to_close as HANDLE)
-    } else {
-        None
-    };
+    let job = if job_to_close != 0 { OwnedHandle::from_raw(job_to_close as HANDLE) } else { None };
     unsafe {
         if let Some(ref job) = job {
             TerminateJobObject(job.as_raw(), TERMINATED_BY_DECODER);
@@ -243,9 +229,7 @@ fn capture(
     drop(main_thread);
     drop(process);
     drop(job);
-    let data = captured
-        .filter(|bytes| !bytes.is_empty())
-        .ok_or(Error::CaptureTimeout)?;
+    let data = captured.filter(|bytes| !bytes.is_empty()).ok_or(Error::CaptureTimeout)?;
     noise::stir((data.len() as u32) ^ 0xAADE_C0DE);
     let text = String::from_utf8_lossy(&data);
     aac::parse_rsa_log(&text, obfstr!("client memory"))
@@ -274,20 +258,12 @@ fn launch_suspended(client: &Path, cwd: &Path, job: HANDLE) -> Result<(OwnedHand
     };
     if ok == 0 {
         let code = unsafe { GetLastError() };
-        return Err(Error::ProcessStart {
-            path: client.to_path_buf(),
-            code,
-        });
+        return Err(Error::ProcessStart { path: client.to_path_buf(), code });
     }
-    let process = OwnedHandle::from_raw(info.hProcess).ok_or_else(|| Error::ProcessStart {
-        path: client.to_path_buf(),
-        code: 0,
-    })?;
+    let process = OwnedHandle::from_raw(info.hProcess)
+        .ok_or_else(|| Error::ProcessStart { path: client.to_path_buf(), code: 0 })?;
     let Some(main_thread) = OwnedHandle::from_raw(info.hThread) else {
-        return Err(Error::ProcessStart {
-            path: client.to_path_buf(),
-            code: 0,
-        });
+        return Err(Error::ProcessStart { path: client.to_path_buf(), code: 0 });
     };
     if !job.is_null() && job != INVALID_HANDLE_VALUE {
         unsafe {

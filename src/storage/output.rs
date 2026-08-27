@@ -129,10 +129,7 @@ mod tests {
         let root = Path::new("/client");
         let source = Path::new("/client/system/armorgrp.dat");
         let out = Path::new("/out");
-        assert_eq!(
-            mirrored_path(root, source, out),
-            PathBuf::from("/out/system/armorgrp.dat")
-        );
+        assert_eq!(mirrored_path(root, source, out), PathBuf::from("/out/system/armorgrp.dat"));
         assert_eq!(
             output_path_for(root, source, out, "_clean.txt"),
             PathBuf::from("/out/system/armorgrp_clean.txt")

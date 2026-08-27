@@ -111,10 +111,6 @@ pub enum Error {
 
 impl Error {
     pub fn io(action: IoAction, path: impl AsRef<std::path::Path>, source: io::Error) -> Self {
-        Self::Io {
-            action,
-            path: path.as_ref().to_path_buf(),
-            source,
-        }
+        Self::Io { action, path: path.as_ref().to_path_buf(), source }
     }
 }

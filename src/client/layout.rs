@@ -12,8 +12,7 @@ pub struct ClientLayout {
 
 impl ClientLayout {
     pub fn is_scryde(&self) -> bool {
-        self.executable
-            .eq_ignore_ascii_case(obfstr!("ScrydeGame.exe"))
+        self.executable.eq_ignore_ascii_case(obfstr!("ScrydeGame.exe"))
     }
 }
 
@@ -24,12 +23,9 @@ pub fn resolve_client_layout(picked: &std::path::Path) -> Option<ClientLayout> {
     let scryde_dir_name = obfstr!("Scryde").to_owned();
     let scryde_exe_name = obfstr!("ScrydeGame.exe").to_owned();
 
-    let layouts = [
-        (&sys_dir_name, &l2_exe_name),
-        (&scryde_dir_name, &scryde_exe_name),
-    ];
+    let layouts = [(&sys_dir_name, &l2_exe_name), (&scryde_dir_name, &scryde_exe_name)];
 
-    for (_system_name, exe) in &layouts {
+    for (_, exe) in &layouts {
         if picked.join(exe).is_file() {
             let root = picked.parent().unwrap_or(picked).to_path_buf();
             return Some(ClientLayout {
@@ -51,24 +47,16 @@ pub fn resolve_client_layout(picked: &std::path::Path) -> Option<ClientLayout> {
         }
     }
 
-    for entry in WalkDir::new(picked)
-        .max_depth(32)
-        .into_iter()
-        .filter_map(Result::ok)
-    {
+    for entry in WalkDir::new(picked).max_depth(32).into_iter().filter_map(Result::ok) {
         if entry.file_type().is_file()
             && let Some(utf8_path) = Utf8Path::from_path(entry.path())
             && let Some(name) = utf8_path.file_name()
         {
-            for (_system_name, exe) in &layouts {
+            for (_, exe) in &layouts {
                 if name.eq_ignore_ascii_case(exe) {
                     let system_dir = utf8_path.parent().unwrap_or(picked).to_path_buf();
                     let root = system_dir.parent().unwrap_or(&system_dir).to_path_buf();
-                    return Some(ClientLayout {
-                        root,
-                        system_dir,
-                        executable: (*exe).clone(),
-                    });
+                    return Some(ClientLayout { root, system_dir, executable: (*exe).clone() });
                 }
             }
         }

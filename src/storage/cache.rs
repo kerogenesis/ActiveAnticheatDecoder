@@ -4,21 +4,38 @@
 //! Value = (N_LE hex, D_LE hex) as captured from live client.
 //! On next run we try cached profile before injecting.
 
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use std::io::Read;
 use std::path::Path;
 
+use crate::crypto::hex::hex_to_bytes;
 use crate::format::aac;
-
-fn hash_bytes(bytes: &[u8]) -> String {
-    let mut h = DefaultHasher::new();
-    bytes.hash(&mut h);
-    format!("{:016x}", h.finish())
-}
+use sha1::{Digest, Sha1};
 
 fn hash_file(path: &Path) -> Option<String> {
-    let bytes = std::fs::read(path).ok()?;
-    Some(hash_bytes(&bytes))
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut buf = vec![0u8; 1024 * 1024];
+    let mut hasher = Sha1::new();
+    let mut total = 0usize;
+    loop {
+        let n = file.read(&mut buf).ok()?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+        total += n;
+        if total >= 1024 * 1024 {
+            break; // only first 1 MiB for speed
+        }
+    }
+    if total == 0 {
+        return None;
+    }
+    let digest = hasher.finalize();
+    // 16 hex = 8 bytes of SHA-1, enough for cache key
+    Some(format!(
+        "{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        digest[0], digest[1], digest[2], digest[3], digest[4], digest[5], digest[6], digest[7]
+    ))
 }
 
 pub fn cache_key(system_dir: &Path, client_exe: &str) -> String {
@@ -27,28 +44,45 @@ pub fn cache_key(system_dir: &Path, client_exe: &str) -> String {
         return h;
     }
     let client = system_dir.join(client_exe);
-    if let Ok(meta) = std::fs::metadata(&client) {
-        let mut h = DefaultHasher::new();
-        meta.len().hash(&mut h);
-        if let Ok(mtime) = meta.modified() {
-            if let Ok(dur) = mtime.duration_since(std::time::UNIX_EPOCH) {
-                dur.as_secs().hash(&mut h);
+    if let Ok(mut file) = std::fs::File::open(&client) {
+        let mut buf = vec![0u8; 64 * 1024];
+        let mut hasher = Sha1::new();
+        let mut any = false;
+        while let Ok(n) = file.read(&mut buf) {
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buf[..n]);
+            any = true;
+            if any && n < buf.len() {
+                break;
             }
         }
-        return format!("{:016x}", h.finish());
+        if any {
+            let d = hasher.finalize();
+            return format!(
+                "{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+                d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7]
+            );
+        }
     }
-    // fallback: hash sorted file names in system
+    // fallback: SHA-1 of sorted file names
     if let Ok(entries) = std::fs::read_dir(system_dir) {
         let mut names: Vec<String> = entries
             .filter_map(|e| e.ok())
             .map(|e| e.file_name().to_string_lossy().to_string())
             .collect();
         names.sort();
-        let mut h = DefaultHasher::new();
+        let mut hasher = Sha1::new();
         for n in &names {
-            n.hash(&mut h);
+            hasher.update(n.as_bytes());
+            hasher.update(b"\0");
         }
-        return format!("{:016x}", h.finish());
+        let d = hasher.finalize();
+        return format!(
+            "{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+            d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7]
+        );
     }
     "unknown".to_owned()
 }
@@ -86,31 +120,14 @@ pub fn save_cached_profile(system_dir: &Path, client_exe: &str, profile: &aac::R
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let n_le_hex = profile
-        .modulus
-        .to_bytes_le()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect::<String>();
+    let n_le_hex =
+        profile.modulus.to_bytes_le().iter().map(|b| format!("{b:02x}")).collect::<String>();
     // private_exponent_be is BE, convert back to LE for storage
     let mut d_le = profile.private_exponent_be.clone();
     d_le.reverse();
     let d_le_hex = d_le.iter().map(|b| format!("{b:02x}")).collect::<String>();
     let content = format!("{n_le_hex}\n{d_le_hex}\n");
     let _ = std::fs::write(&path, content.as_bytes());
-}
-
-fn hex_to_bytes(text: &str) -> Option<Vec<u8>> {
-    if text.is_empty() || text.len() % 2 != 0 {
-        return None;
-    }
-    let mut out = Vec::with_capacity(text.len() / 2);
-    for pair in text.as_bytes().chunks(2) {
-        let hi = (pair[0] as char).to_digit(16)?;
-        let lo = (pair[1] as char).to_digit(16)?;
-        out.push((hi * 16 + lo) as u8);
-    }
-    Some(out)
 }
 
 #[cfg(test)]
@@ -136,10 +153,7 @@ mod tests {
         let key = "abcdef1234567890";
         let path = cache_path(key);
         assert!(path.starts_with(std::env::temp_dir()));
-        assert_eq!(
-            path.file_name().unwrap().to_string_lossy(),
-            "rsa_abcdef1234567890.bin"
-        );
+        assert_eq!(path.file_name().unwrap().to_string_lossy(), "rsa_abcdef1234567890.bin");
         assert!(!path.to_string_lossy().contains("aa_key_cache"));
         assert!(!path.to_string_lossy().contains("clmods_"));
     }

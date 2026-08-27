@@ -35,11 +35,7 @@ fn read_header(path: &Path, count: usize) -> Option<Vec<u8>> {
 pub fn scan_tree(root: &Path, on_progress: &mut dyn FnMut(usize)) -> ScanResult {
     let mut result = ScanResult::default();
 
-    for entry in WalkDir::new(root)
-        .max_depth(32)
-        .into_iter()
-        .filter_map(Result::ok)
-    {
+    for entry in WalkDir::new(root).max_depth(32).into_iter().filter_map(Result::ok) {
         if entry.file_type().is_file() {
             result.files_examined += 1;
             let path = entry.path();
@@ -49,9 +45,7 @@ pub fn scan_tree(root: &Path, on_progress: &mut dyn FnMut(usize)) -> ScanResult 
                 && let Some(header) = read_header(path, 20)
                 && aac::header_is_aac(&header)
             {
-                result.aac.push(Found {
-                    path: path.to_path_buf(),
-                });
+                result.aac.push(Found { path: path.to_path_buf() });
             }
             on_progress(result.files_examined);
         }

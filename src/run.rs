@@ -72,9 +72,7 @@ pub fn banner() {
 pub fn run_scan(picked: &Path, interactive: bool) {
     let Some(layout) = resolve_client_layout(picked) else {
         term::field_line("+ Client:", &picked.display().to_string());
-        term::error(obfstr!(
-            "I can't find the client here: expected system\\l2.exe..."
-        ));
+        term::error(obfstr!("I can't find the client here: expected system\\l2.exe..."));
         finish(interactive);
         return;
     };
@@ -124,18 +122,12 @@ pub fn run_scan(picked: &Path, interactive: bool) {
     let result = scan::scan_tree(root, &mut |examined| spinner.tick(examined));
     spinner.finish();
 
-    let targets: Vec<String> = result
-        .aac
-        .iter()
-        .map(|found| output::relative(&found.path, root))
-        .collect();
+    let targets: Vec<String> =
+        result.aac.iter().map(|found| output::relative(&found.path, root)).collect();
 
     term::field_line(
         "+ Status:",
-        &format!(
-            "Key captured -> Scanned tree ({} targets found)",
-            targets.len()
-        ),
+        &format!("Key captured -> Scanned tree ({} targets found)", targets.len()),
     );
 
     if targets.is_empty() {
@@ -159,27 +151,14 @@ pub fn run_scan(picked: &Path, interactive: bool) {
         let decoded = fs::read(source)
             .map_err(|source_err| Error::io(IoAction::Read, source, source_err))
             .and_then(|bytes| {
-                decode_aac_file(
-                    source,
-                    &bytes,
-                    &profiles,
-                    root,
-                    &output_root,
-                    auto_decode_gamekit,
-                )
+                decode_aac_file(source, &bytes, &profiles, root, &output_root, auto_decode_gamekit)
             });
 
         let current_step = completed_counter.fetch_add(1, Ordering::SeqCst) + 1;
         let is_ok = decoded.is_ok();
         let err_str = decoded.as_ref().err().map(|e| e.to_string());
 
-        term::step_result(
-            current_step,
-            result.aac.len(),
-            &target_rel,
-            is_ok,
-            err_str.as_deref(),
-        );
+        term::step_result(current_step, result.aac.len(), &target_rel, is_ok, err_str.as_deref());
 
         let mut outcome_guard = outcome_mutex.lock().unwrap_or_else(|e| e.into_inner());
         match decoded {
@@ -188,28 +167,18 @@ pub fn run_scan(picked: &Path, interactive: bool) {
         }
     });
 
-    let outcome = outcome_mutex
-        .into_inner()
-        .unwrap_or_else(|e| e.into_inner());
+    let outcome = outcome_mutex.into_inner().unwrap_or_else(|e| e.into_inner());
 
     println!();
     term::plain_line(
         "Result:",
-        &format!(
-            "{} succeeded, {} failed",
-            outcome.clean_paths.len(),
-            outcome.failures.len()
-        ),
+        &format!("{} succeeded, {} failed", outcome.clean_paths.len(), outcome.failures.len()),
     );
     term::plain_line("Clean files:", &output_root.display().to_string());
 
     if !outcome.failures.is_empty() {
         println!();
-        term::error(&format!(
-            "{} {}",
-            obfstr!("Failed files:"),
-            outcome.failures.len()
-        ));
+        term::error(&format!("{} {}", obfstr!("Failed files:"), outcome.failures.len()));
         for (path, reason) in &outcome.failures {
             println!("    {}", path.display());
             println!("      {reason}");
@@ -244,10 +213,8 @@ pub fn run_dropped_files(paths: &[PathBuf]) {
     term::plain_label("Decoding:");
 
     paths.par_iter().for_each(|path| {
-        let name = path
-            .file_name()
-            .map(|value| value.to_string_lossy().into_owned())
-            .unwrap_or_default();
+        let name =
+            path.file_name().map(|value| value.to_string_lossy().into_owned()).unwrap_or_default();
 
         let decoded = decode_dropped_file(path, &name, &output_root);
 
@@ -264,28 +231,18 @@ pub fn run_dropped_files(paths: &[PathBuf]) {
         }
     });
 
-    let outcome = outcome_mutex
-        .into_inner()
-        .unwrap_or_else(|e| e.into_inner());
+    let outcome = outcome_mutex.into_inner().unwrap_or_else(|e| e.into_inner());
 
     println!();
     term::plain_line(
         "Result:",
-        &format!(
-            "{} succeeded, {} failed",
-            outcome.clean_paths.len(),
-            outcome.failures.len()
-        ),
+        &format!("{} succeeded, {} failed", outcome.clean_paths.len(), outcome.failures.len()),
     );
     term::plain_line("Clean files:", &output_root.display().to_string());
 
     if !outcome.failures.is_empty() {
         println!();
-        term::error(&format!(
-            "{} {}",
-            obfstr!("Failed files:"),
-            outcome.failures.len()
-        ));
+        term::error(&format!("{} {}", obfstr!("Failed files:"), outcome.failures.len()));
         for (path, reason) in &outcome.failures {
             println!("    {}", path.display());
             println!("      {reason}");
@@ -314,9 +271,7 @@ pub fn run_silent_legacy_files(paths: &[PathBuf]) {
         }
     });
 
-    let failures = failures_mutex
-        .into_inner()
-        .unwrap_or_else(|e| e.into_inner());
+    let failures = failures_mutex.into_inner().unwrap_or_else(|e| e.into_inner());
 
     if failures.is_empty() {
         return;

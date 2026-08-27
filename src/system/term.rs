@@ -6,10 +6,26 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+#[derive(Clone, Copy)]
+enum Color {
+    Green,
+    Red,
+    Yellow,
+    Dim,
+}
+
+impl Color {
+    const fn ansi(self) -> &'static str {
+        match self {
+            Self::Green => "\x1b[32m",
+            Self::Red => "\x1b[31m",
+            Self::Yellow => "\x1b[33m",
+            Self::Dim => "\x1b[90m",
+        }
+    }
+}
+
 const RESET: &str = "\x1b[0m";
-const GREEN: &str = "\x1b[32m";
-const RED: &str = "\x1b[31m";
-const YELLOW: &str = "\x1b[33m";
 
 const SPINNER_FRAMES: [&str; 4] = ["|", "/", "-", "\\"];
 const SPINNER_INTERVAL: Duration = Duration::from_millis(80);
@@ -124,12 +140,8 @@ fn styled() -> bool {
     STYLED.load(Ordering::Relaxed)
 }
 
-fn paint(colour: &str, text: &str) -> String {
-    if styled() {
-        format!("{colour}{text}{RESET}")
-    } else {
-        text.to_owned()
-    }
+fn paint(colour: Color, text: &str) -> String {
+    if styled() { format!("{}{text}{RESET}", colour.ansi()) } else { text.to_owned() }
 }
 
 pub fn banner() {
@@ -140,12 +152,12 @@ pub fn banner() {
 
 pub fn field_line(label: &str, value: &str) {
     let _guard = CONSOLE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-    println!("{}  {value}", paint(YELLOW, label));
+    println!("{}  {value}", paint(Color::Yellow, label));
 }
 
 pub fn field_label(label: &str) {
     let _guard = CONSOLE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-    println!("{}", paint(YELLOW, label));
+    println!("{}", paint(Color::Yellow, label));
 }
 
 pub fn plain_line(label: &str, value: &str) {
@@ -160,17 +172,17 @@ pub fn plain_label(label: &str) {
 
 pub fn error(text: &str) {
     let _guard = CONSOLE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-    println!("  {}", paint(RED, text));
+    println!("  {}", paint(Color::Red, text));
 }
 
 pub fn step_result(index: usize, total: usize, label: &str, is_ok: bool, reason: Option<&str>) {
     let _guard = CONSOLE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
     let width = total.to_string().len();
     if is_ok {
-        let prefix = paint(GREEN, &format!("  [{index:>width$}/{total}]"));
+        let prefix = paint(Color::Green, &format!("  [{index:>width$}/{total}]"));
         println!("  {prefix} {label}");
     } else {
-        let prefix = paint(RED, &format!("  [{index:>width$}/{total}]"));
+        let prefix = paint(Color::Red, &format!("  [{index:>width$}/{total}]"));
         let err = reason.unwrap_or_default();
         println!("  {prefix} {label} (Error: {err})");
     }
@@ -185,12 +197,7 @@ pub struct Spinner {
 
 impl Spinner {
     pub fn new(label: &str) -> Self {
-        Self {
-            label: label.to_owned(),
-            frame: 0,
-            last_draw: None,
-            active: styled(),
-        }
+        Self { label: label.to_owned(), frame: 0, last_draw: None, active: styled() }
     }
 
     fn ready(&mut self) -> bool {
@@ -239,7 +246,7 @@ impl Spinner {
 
 pub fn press_any_key(message: &str) {
     println!();
-    print!("  {}", paint("\x1b[90m", message));
+    print!("  {}", paint(Color::Dim, message));
     let _ = io::stdout().flush();
     unsafe {
         _getch();

@@ -49,11 +49,7 @@ fn main() {
     term::ensure_console();
     run::banner();
     for path in &missing {
-        term::error(&format!(
-            "{} {}",
-            obfstr!("path not found:"),
-            path.display()
-        ));
+        term::error(&format!("{} {}", obfstr!("path not found:"), path.display()));
     }
     if !files.is_empty() {
         run::run_dropped_files(&files);

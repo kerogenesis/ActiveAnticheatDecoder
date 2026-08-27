@@ -109,18 +109,11 @@ fn key_120_byte(i: usize) -> u8 {
 }
 
 fn decrypt_120(payload: &[u8]) -> Vec<u8> {
-    payload
-        .iter()
-        .enumerate()
-        .map(|(i, &b)| b ^ key_120_byte(i))
-        .collect()
+    payload.iter().enumerate().map(|(i, &b)| b ^ key_120_byte(i)).collect()
 }
 
 fn key_121_from_filename(filename: &str) -> u8 {
-    let sum: u32 = filename
-        .bytes()
-        .map(|b| b.to_ascii_lowercase() as u32)
-        .sum();
+    let sum: u32 = filename.bytes().map(|b| b.to_ascii_lowercase() as u32).sum();
     (sum & 0xFF) as u8
 }
 
@@ -146,19 +139,11 @@ fn decrypt_121(payload: &[u8], filename: &str) -> Vec<u8> {
 }
 
 fn decrypt_211(payload: &[u8]) -> Vec<u8> {
-    payload
-        .iter()
-        .enumerate()
-        .map(|(i, &b)| b ^ KEY_211[i % 8])
-        .collect()
+    payload.iter().enumerate().map(|(i, &b)| b ^ KEY_211[i % 8]).collect()
 }
 
 fn decrypt_212(payload: &[u8]) -> Vec<u8> {
-    payload
-        .iter()
-        .enumerate()
-        .map(|(i, &b)| b ^ KEY_212[i % 8])
-        .collect()
+    payload.iter().enumerate().map(|(i, &b)| b ^ KEY_212[i % 8]).collect()
 }
 
 fn rsa_modpow_block(block: &[u8; 128], modulus: &BigUint, exponent: &BigUint) -> [u8; 128] {
@@ -258,10 +243,7 @@ fn decrypt_413(payload: &[u8]) -> Result<Vec<u8>> {
         }
     }
 
-    let bf_keys: [&[u8; 8]; 2] = [
-        &[0x59, 0x3B, 0x5D, 0x2C, 0x47, 0x74, 0x3D, 0x31],
-        b"Lineage2",
-    ];
+    let bf_keys: [&[u8; 8]; 2] = [&[0x59, 0x3B, 0x5D, 0x2C, 0x47, 0x74, 0x3D, 0x31], b"Lineage2"];
     let aligned_len = payload.len() - (payload.len() % 8);
     if aligned_len >= 8 {
         let aligned_payload = &payload[..aligned_len];

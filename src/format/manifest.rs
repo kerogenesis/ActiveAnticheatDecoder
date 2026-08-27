@@ -1,7 +1,6 @@
 //! Legacy `ft_*` path: static-key RC4 over a binary manifest.
 
-use crate::crypto::rc4;
-use crate::crypto::sha1;
+use crate::crypto::{hex::to_hex, rc4, sha1};
 use crate::error::{Error, Result};
 use obfstr::obfstr;
 use std::fmt::Write as _;
@@ -94,29 +93,12 @@ pub fn parse(data: &[u8]) -> Result<Manifest> {
             let length = cursor.u16("digest length")? as usize;
             digests.push(cursor.take(length, "digest")?.to_vec());
         }
-        records.push(Record {
-            id,
-            kind,
-            path,
-            flags,
-            digests,
-        });
+        records.push(Record { id, kind, path, flags, digests });
     }
     if cursor.remaining() != 0 {
-        return Err(Error::ManifestTrailing {
-            parsed: cursor.offset,
-            total: data.len(),
-        });
+        return Err(Error::ManifestTrailing { parsed: cursor.offset, total: data.len() });
     }
     Ok(Manifest { records })
-}
-
-fn to_hex(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        let _ = write!(out, "{byte:02x}");
-    }
-    out
 }
 
 pub fn format(manifest: &Manifest) -> String {

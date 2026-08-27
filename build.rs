@@ -88,12 +88,8 @@ fn embed_windows_icon(out_dir: &Path) {
     fs::write(&script, format!("1 ICON \"{icon_ref}\"\n")).expect("cannot write the icon script");
 
     let resource = out_dir.join("app.res");
-    let status = Command::new(&compiler)
-        .arg("/nologo")
-        .arg("/fo")
-        .arg(&resource)
-        .arg(&script)
-        .status();
+    let status =
+        Command::new(&compiler).arg("/nologo").arg("/fo").arg(&resource).arg(&script).status();
 
     match status {
         Ok(code) if code.success() => {
@@ -165,10 +161,7 @@ fn newest_sdk_resource_compiler() -> Option<PathBuf> {
     let mut roots: Vec<PathBuf> = Vec::new();
     for variable in ["ProgramFiles(x86)", "ProgramFiles"] {
         if let Some(program_files) = env::var_os(variable) {
-            let root = PathBuf::from(program_files)
-                .join("Windows Kits")
-                .join("10")
-                .join("bin");
+            let root = PathBuf::from(program_files).join("Windows Kits").join("10").join("bin");
             if !roots.contains(&root) {
                 roots.push(root);
             }
@@ -210,8 +203,5 @@ fn newest_sdk_resource_compiler() -> Option<PathBuf> {
 /// dotted version so unrelated directories are ignored.
 #[cfg(windows)]
 fn sdk_version_key(version: &str) -> Option<Vec<u64>> {
-    version
-        .split('.')
-        .map(|part| part.parse::<u64>().ok())
-        .collect()
+    version.split('.').map(|part| part.parse::<u64>().ok()).collect()
 }

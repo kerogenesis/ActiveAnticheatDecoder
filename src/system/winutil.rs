@@ -12,11 +12,7 @@ unsafe impl Send for OwnedHandle {}
 
 impl OwnedHandle {
     pub fn from_raw(handle: HANDLE) -> Option<Self> {
-        if handle.is_null() || handle == INVALID_HANDLE_VALUE {
-            None
-        } else {
-            Some(Self(handle))
-        }
+        if handle.is_null() || handle == INVALID_HANDLE_VALUE { None } else { Some(Self(handle)) }
     }
 
     pub fn as_raw(&self) -> HANDLE {

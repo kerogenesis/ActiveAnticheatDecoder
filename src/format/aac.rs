@@ -1,6 +1,6 @@
 //! ActiveAnticheatCrypt container decoding.
 
-use crate::crypto::rc4;
+use crate::crypto::{hex::hex_to_bytes, rc4};
 use crate::error::{Error, Result};
 use num_bigint::BigUint;
 use obfstr::{obfbytes, obfstr};
@@ -34,34 +34,15 @@ impl RsaProfile {
         }
         let mut private_exponent_be = d_le.to_vec();
         private_exponent_be.reverse();
-        Ok(Self {
-            source: source.to_owned(),
-            modulus,
-            private_exponent_be,
-        })
+        Ok(Self { source: source.to_owned(), modulus, private_exponent_be })
     }
-}
-
-fn hex_to_bytes(text: &str) -> Option<Vec<u8>> {
-    if text.is_empty() || !text.len().is_multiple_of(2) {
-        return None;
-    }
-    let mut out = Vec::with_capacity(text.len() / 2);
-    for pair in text.as_bytes().chunks(2) {
-        let hi = (pair[0] as char).to_digit(16)?;
-        let lo = (pair[1] as char).to_digit(16)?;
-        out.push((hi * 16 + lo) as u8);
-    }
-    Some(out)
 }
 
 fn find_component(text: &str, name: &str) -> Option<Vec<u8>> {
     let needle = format!("{name}{}", obfstr!("_LE="));
     let start = text.find(&needle)? + needle.len();
     let rest = &text[start..];
-    let end = rest
-        .find(|c: char| !c.is_ascii_hexdigit())
-        .unwrap_or(rest.len());
+    let end = rest.find(|c: char| !c.is_ascii_hexdigit()).unwrap_or(rest.len());
     hex_to_bytes(&rest[..end])
 }
 
@@ -125,7 +106,8 @@ pub fn decode_with_profile(file_bytes: &[u8], profile: &RsaProfile) -> Result<De
         20 => message.to_vec(),
         other => return Err(Error::UnexpectedRsaMessageLen { got: other }),
     };
-    let plaintext = rc4::crypt(&file_bytes[PAYLOAD_OFFSET..], &rc4_key);
+    let mut plaintext = file_bytes[PAYLOAD_OFFSET..].to_vec();
+    rc4::crypt_in_place(&mut plaintext, &rc4_key);
     Ok(Decoded { plaintext })
 }
 

@@ -35,10 +35,7 @@ mod tests {
     #[test]
     fn matches_known_rc4_vector() {
         let output = crypt(b"Plaintext", b"Key");
-        assert_eq!(
-            output,
-            vec![0xBB, 0xF3, 0x16, 0xE8, 0xD9, 0x40, 0xAF, 0x0A, 0xD3]
-        );
+        assert_eq!(output, vec![0xBB, 0xF3, 0x16, 0xE8, 0xD9, 0x40, 0xAF, 0x0A, 0xD3]);
     }
 
     #[test]
