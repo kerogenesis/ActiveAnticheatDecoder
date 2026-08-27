@@ -11,6 +11,7 @@ use crate::format::manifest;
 fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let z = days + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    #[allow(clippy::cast_sign_loss)]
     let day_of_era = (z - era * 146_097) as u64;
     let year_of_era =
         (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;

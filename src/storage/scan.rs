@@ -35,7 +35,11 @@ fn read_header(path: &Path, count: usize) -> Option<Vec<u8>> {
 pub fn scan_tree(root: &Path, on_progress: &mut dyn FnMut(usize)) -> ScanResult {
     let mut result = ScanResult::default();
 
-    for entry in WalkDir::new(root).max_depth(32).into_iter().filter_map(Result::ok) {
+    for entry in WalkDir::new(root)
+        .max_depth(32)
+        .into_iter()
+        .filter_map(|r| r.map_err(|e| eprintln!("scan: walk error: {e}")).ok())
+    {
         if entry.file_type().is_file() {
             result.files_examined += 1;
             let path = entry.path();

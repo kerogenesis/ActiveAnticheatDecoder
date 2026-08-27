@@ -150,7 +150,6 @@ dependencies = [
  "byteorder",
  "camino",
  "cipher",
- "digest",
  "flate2",
  "num-bigint",
  "num-traits",

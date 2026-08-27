@@ -21,7 +21,6 @@ thiserror = "2.0"
 walkdir = "2.5"
 camino = "1.1"
 sha1 = "0.10"
-digest = "0.10"
 
 [dependencies.windows-sys]
 version = "0.61.2"

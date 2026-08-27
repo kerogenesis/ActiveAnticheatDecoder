@@ -101,10 +101,13 @@ fn decrypt_111(payload: &[u8]) -> Vec<u8> {
     payload.iter().map(|&b| b ^ 0xAC).collect()
 }
 
+const KEY_120_BASE: usize = 230;
+const KEY_120_NIBBLE_MASK: u32 = 0x0F;
+
 fn key_120_byte(i: usize) -> u8 {
-    let a1 = (i + 230) as u32;
-    let key_low = ((a1 ^ (a1 >> 8)) & 0x0F) as u8;
-    let key_high = ((((a1 >> 4) ^ (a1 >> 12)) & 0x0F) << 4) as u8;
+    let a1 = (i + KEY_120_BASE) as u32;
+    let key_low = ((a1 ^ (a1 >> 8)) & KEY_120_NIBBLE_MASK) as u8;
+    let key_high = ((((a1 >> 4) ^ (a1 >> 12)) & KEY_120_NIBBLE_MASK) << 4) as u8;
     key_low | key_high
 }
 
@@ -113,7 +116,7 @@ fn decrypt_120(payload: &[u8]) -> Vec<u8> {
 }
 
 fn key_121_from_filename(filename: &str) -> u8 {
-    let sum: u32 = filename.bytes().map(|b| b.to_ascii_lowercase() as u32).sum();
+    let sum: u32 = filename.bytes().map(|b| u32::from(b.to_ascii_lowercase())).sum();
     (sum & 0xFF) as u8
 }
 
@@ -250,7 +253,7 @@ fn decrypt_413(payload: &[u8]) -> Result<Vec<u8>> {
         for bf_key in bf_keys {
             if let Ok(cipher) = blowfish::Blowfish::<byteorder::BE>::new_from_slice(bf_key) {
                 let mut decrypted = aligned_payload.to_vec();
-                for chunk in decrypted.as_chunks_mut::<8>().0 {
+                for chunk in decrypted.chunks_exact_mut(8) {
                     let mut block = cipher::Block::<blowfish::Blowfish<byteorder::BE>>::default();
                     block.copy_from_slice(chunk);
                     cipher::BlockCipherDecrypt::decrypt_block(&cipher, &mut block);

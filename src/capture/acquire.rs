@@ -3,22 +3,31 @@ use std::time::Duration;
 
 use crate::format::aac::RsaProfile;
 use crate::storage::cache;
-use crate::system::term;
 
-/// Returns `RsaProfile` via cache or client launch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AcquireSource {
+    Cache,
+    Live,
+}
+
+pub struct Acquired {
+    pub profile: RsaProfile,
+    pub source: AcquireSource,
+}
+
+/// Returns `RsaProfile` via cache or client launch
 pub fn acquire_profile(
     system_dir: &Path,
     client_exe: &str,
     candidates: &[String],
     proxy_dll: &[u8],
     timeout: Duration,
-) -> Result<RsaProfile, crate::error::Error> {
+) -> Result<Acquired, crate::error::Error> {
     if let Some(cached) = cache::load_cached_profile(system_dir, client_exe) {
-        term::field_line("+ Key:", "from cache");
-        return Ok(cached);
+        return Ok(Acquired { profile: cached, source: AcquireSource::Cache });
     }
 
-    let mut spinner = term::Spinner::new("capturing key");
+    let mut spinner = crate::system::term::Spinner::new("capturing key");
     let result = crate::capture::live::capture_key(
         system_dir,
         client_exe,
@@ -32,8 +41,7 @@ pub fn acquire_profile(
     match result {
         Ok(profile) => {
             cache::save_cached_profile(system_dir, client_exe, &profile);
-            term::field_line("+ Key:", "captured live, cached for next run");
-            Ok(profile)
+            Ok(Acquired { profile, source: AcquireSource::Live })
         }
         Err(e) => Err(e),
     }

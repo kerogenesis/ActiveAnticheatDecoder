@@ -1,4 +1,4 @@
-//! Console presentation: colour, spinners and small animations.
+//! Console colour, spinners and animations.
 
 use obfstr::obfstr;
 use std::io::{self, IsTerminal, Write};
@@ -34,7 +34,7 @@ static CONSOLE_MUTEX: Mutex<()> = Mutex::new(());
 
 mod windows_console {
     use crate::system::winutil::to_wide;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::OnceLock;
     use windows_sys::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::Globalization::CP_UTF8;
     use windows_sys::Win32::Storage::FileSystem::{
@@ -46,8 +46,8 @@ mod windows_console {
         SetConsoleMode, SetConsoleOutputCP, SetStdHandle,
     };
 
-    static READY: AtomicBool = AtomicBool::new(false);
-    static OWNED: AtomicBool = AtomicBool::new(false);
+    static READY: OnceLock<bool> = OnceLock::new();
+    static OWNED: OnceLock<bool> = OnceLock::new();
 
     unsafe fn open_console_device(name: &str) -> *mut core::ffi::c_void {
         let wide = to_wide(name);
@@ -65,17 +65,18 @@ mod windows_console {
     }
 
     pub fn ensure() -> bool {
-        if READY.load(Ordering::Relaxed) {
-            return OWNED.load(Ordering::Relaxed);
+        if let Some(&ready) = READY.get() {
+            let _ = ready;
+            return *OWNED.get().unwrap_or(&false);
         }
         let owned = unsafe { wire() };
-        OWNED.store(owned, Ordering::Relaxed);
-        READY.store(true, Ordering::Relaxed);
+        let _ = OWNED.set(owned);
+        let _ = READY.set(true);
         owned
     }
 
     pub fn owns() -> bool {
-        OWNED.load(Ordering::Relaxed)
+        *OWNED.get().unwrap_or(&false)
     }
 
     unsafe fn wire() -> bool {

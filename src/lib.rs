@@ -8,16 +8,13 @@
 #![allow(clippy::must_use_candidate)]
 #![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::cast_possible_wrap)]
-#![allow(clippy::cast_sign_loss)]
-#![allow(clippy::cast_lossless)]
-#![allow(clippy::large_stack_arrays)]
-#![allow(clippy::incompatible_msrv)]
 #![allow(clippy::too_many_lines)]
 #![allow(clippy::borrow_as_ptr)]
 #![allow(clippy::map_unwrap_or)]
 #![allow(clippy::redundant_closure_for_method_calls)]
 #![allow(clippy::implicit_clone)]
 #![allow(clippy::format_collect)]
+#![allow(clippy::semicolon_if_nothing_returned)]
 
 pub mod capture;
 pub mod client;

@@ -7,6 +7,8 @@
 use std::io::Read;
 use std::path::Path;
 
+use obfstr::obfstr;
+
 use crate::crypto::hex::hex_to_bytes;
 use crate::format::aac;
 use sha1::{Digest, Sha1};
@@ -39,7 +41,7 @@ fn hash_file(path: &Path) -> Option<String> {
 }
 
 pub fn cache_key(system_dir: &Path, client_exe: &str) -> String {
-    let clmods = system_dir.join("clmods.dll");
+    let clmods = system_dir.join(obfstr!("clmods.dll"));
     if let Some(h) = hash_file(&clmods) {
         return h;
     }
@@ -88,7 +90,7 @@ pub fn cache_key(system_dir: &Path, client_exe: &str) -> String {
 }
 
 fn cache_dir() -> std::path::PathBuf {
-    std::env::temp_dir().join("AACDecoder")
+    std::env::temp_dir().join(obfstr!("AACDecoder"))
 }
 
 fn cache_path(key: &str) -> std::path::PathBuf {
@@ -111,7 +113,7 @@ pub fn load_cached_profile(system_dir: &Path, client_exe: &str) -> Option<aac::R
     }
     let n_le = hex_to_bytes(n_hex)?;
     let d_le = hex_to_bytes(d_hex)?;
-    aac::RsaProfile::from_le_components("cache", &n_le, &d_le).ok()
+    aac::RsaProfile::from_le_components(obfstr!("cache"), &n_le, &d_le).ok()
 }
 
 pub fn save_cached_profile(system_dir: &Path, client_exe: &str, profile: &aac::RsaProfile) {
@@ -128,6 +130,12 @@ pub fn save_cached_profile(system_dir: &Path, client_exe: &str, profile: &aac::R
     let d_le_hex = d_le.iter().map(|b| format!("{b:02x}")).collect::<String>();
     let content = format!("{n_le_hex}\n{d_le_hex}\n");
     let _ = std::fs::write(&path, content.as_bytes());
+}
+
+pub fn invalidate_cache(system_dir: &Path, client_exe: &str) {
+    let key = cache_key(system_dir, client_exe);
+    let path = cache_path(&key);
+    let _ = std::fs::remove_file(path);
 }
 
 #[cfg(test)]

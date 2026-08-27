@@ -79,7 +79,7 @@ pub enum Error {
     #[error("unexpected RSA message length {got}, expected 20 or 40")]
     UnexpectedRsaMessageLen { got: usize },
 
-    #[error("decode failed: {reasons:?}")]
+    #[error("decode failed:\n  {}", reasons.join("\n  "))]
     DecodeFailed { reasons: Vec<String> },
 
     #[error("EOF reading {what}")]

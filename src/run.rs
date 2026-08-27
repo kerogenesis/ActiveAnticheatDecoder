@@ -6,11 +6,11 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use crate::capture::acquire::acquire_profile;
+use crate::capture::acquire::{AcquireSource, acquire_profile};
 use crate::client::{config, resolve_client_layout};
 use crate::error::{Error, IoAction, Result};
 use crate::format::{aac, decode as fmt_decode, manifest};
-use crate::storage::{output, scan};
+use crate::storage::{cache, output, scan};
 use crate::system::term;
 
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -22,6 +22,33 @@ const PROXY_DLL: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/aa_proxy.dll"
 struct Outcome {
     clean_paths: Vec<PathBuf>,
     failures: Vec<(PathBuf, Error)>,
+}
+
+fn report_outcome(outcome: &Outcome, output_root: &Path) {
+    println!();
+    term::plain_line(
+        obfstr!("Result:"),
+        &format!("{} succeeded, {} failed", outcome.clean_paths.len(), outcome.failures.len()),
+    );
+    term::plain_line(obfstr!("Clean files:"), &output_root.display().to_string());
+    if !outcome.failures.is_empty() {
+        println!();
+        term::error(&format!("{} {}", obfstr!("Failed files:"), outcome.failures.len()));
+        for (path, reason) in &outcome.failures {
+            println!("    {}", path.display());
+            println!("      {reason}");
+        }
+    }
+}
+
+fn is_cache_poisoned(outcome: &Outcome, source: AcquireSource) -> bool {
+    source == AcquireSource::Cache
+        && outcome.clean_paths.is_empty()
+        && !outcome.failures.is_empty()
+        && outcome
+            .failures
+            .iter()
+            .all(|(_, e)| matches!(e, Error::Pkcs1PaddingInvalid | Error::DecodeFailed { .. }))
 }
 
 pub fn finish(interactive: bool) {
@@ -36,7 +63,7 @@ pub fn banner() {
 
 pub fn run_scan(picked: &Path, interactive: bool) {
     let Some(layout) = resolve_client_layout(picked) else {
-        term::field_line("+ Client:", &picked.display().to_string());
+        term::field_line(obfstr!("+ Client:"), &picked.display().to_string());
         term::error(obfstr!("I can't find the client here: expected system\\l2.exe..."));
         finish(interactive);
         return;
@@ -45,103 +72,117 @@ pub fn run_scan(picked: &Path, interactive: bool) {
     let root = layout.root.as_std_path();
     let system_dir = layout.system_dir.as_std_path();
 
-    term::field_line("+ Client:", &root.display().to_string());
+    term::field_line(obfstr!("+ Client:"), &root.display().to_string());
 
     let config_path = output::executable_directory().join(obfstr!("config.ini"));
     let candidates = config::proxy_candidates(&config_path);
     let auto_decode_gamekit =
         layout.is_scryde() && config::scryde_gamekitdata_auto_decode(&config_path);
 
-    // cache -> live injection
-    let profile = match acquire_profile(
+    let mut acquired = match acquire_profile(
         system_dir,
         &layout.executable,
         &candidates,
         PROXY_DLL,
         CAPTURE_TIMEOUT,
     ) {
-        Ok(p) => p,
+        Ok(a) => a,
         Err(error) => {
-            term::field_line("+ Status:", &format!("Key capture failed: {error}"));
+            term::field_line(obfstr!("+ Status:"), &format!("Key capture failed: {error}"));
             finish(interactive);
             return;
         }
     };
+    match acquired.source {
+        AcquireSource::Cache => term::field_line(obfstr!("+ Key:"), obfstr!("from cache")),
+        AcquireSource::Live => {
+            term::field_line(obfstr!("+ Key:"), obfstr!("captured live, cached for next run"))
+        }
+    }
 
     let mut spinner = term::Spinner::new(obfstr!("scanning tree"));
     let result = scan::scan_tree(root, &mut |examined| spinner.tick(examined));
     spinner.finish();
 
-    let targets: Vec<String> =
-        result.aac.iter().map(|found| output::relative(&found.path, root)).collect();
+    let key_origin = match acquired.source {
+        AcquireSource::Cache => obfstr!("Key from cache").to_string(),
+        AcquireSource::Live => obfstr!("Key captured live").to_string(),
+    };
+    let status = format!("{key_origin} -> Scanned tree ({} targets found)", result.aac.len());
+    term::field_line(obfstr!("+ Status:"), &status);
 
-    term::field_line(
-        "+ Status:",
-        &format!("Key captured -> Scanned tree ({} targets found)", targets.len()),
-    );
-
-    if targets.is_empty() {
+    if result.aac.is_empty() {
         finish(interactive);
         return;
     }
 
-    let profiles = [profile];
     let output_root = output::output_root();
 
+    // Helper to run parallel decode with a given profile.
+    let do_decode = |profile: &aac::RsaProfile| -> Outcome {
+        let profiles = [profile.clone()];
+        let completed_counter = AtomicUsize::new(0);
+        let outcome_mutex = Mutex::new(Outcome::default());
+        result.aac.par_iter().for_each(|found| {
+            let source = &found.path;
+            let target_rel = output::relative(source, root);
+            let decoded = fs::read(source)
+                .map_err(|source_err| Error::io(IoAction::Read, source, source_err))
+                .and_then(|bytes| {
+                    fmt_decode::decode_aac_file(
+                        source,
+                        &bytes,
+                        &profiles,
+                        root,
+                        &output_root,
+                        auto_decode_gamekit,
+                    )
+                });
+            let current_step = completed_counter.fetch_add(1, Ordering::SeqCst) + 1;
+            let is_ok = decoded.is_ok();
+            let err_str = decoded.as_ref().err().map(|e| e.to_string());
+            term::step_result(
+                current_step,
+                result.aac.len(),
+                &target_rel,
+                is_ok,
+                err_str.as_deref(),
+            );
+            let mut outcome_guard = outcome_mutex.lock().unwrap_or_else(|e| e.into_inner());
+            match decoded {
+                Ok(destination) => outcome_guard.clean_paths.push(destination),
+                Err(error) => outcome_guard.failures.push((source.to_path_buf(), error)),
+            }
+        });
+        outcome_mutex.into_inner().unwrap_or_else(|e| e.into_inner())
+    };
+
     println!();
-    term::plain_label("Decoding:");
+    term::plain_label(obfstr!("Decoding:"));
+    let mut outcome = do_decode(&acquired.profile);
 
-    let completed_counter = AtomicUsize::new(0);
-    let outcome_mutex = Mutex::new(Outcome::default());
-
-    result.aac.par_iter().for_each(|found| {
-        let source = &found.path;
-        let target_rel = output::relative(source, root);
-
-        let decoded = fs::read(source)
-            .map_err(|source_err| Error::io(IoAction::Read, source, source_err))
-            .and_then(|bytes| {
-                fmt_decode::decode_aac_file(
-                    source,
-                    &bytes,
-                    &profiles,
-                    root,
-                    &output_root,
-                    auto_decode_gamekit,
-                )
-            });
-
-        let current_step = completed_counter.fetch_add(1, Ordering::SeqCst) + 1;
-        let is_ok = decoded.is_ok();
-        let err_str = decoded.as_ref().err().map(|e| e.to_string());
-
-        term::step_result(current_step, result.aac.len(), &target_rel, is_ok, err_str.as_deref());
-
-        let mut outcome_guard = outcome_mutex.lock().unwrap_or_else(|e| e.into_inner());
-        match decoded {
-            Ok(destination) => outcome_guard.clean_paths.push(destination),
-            Err(error) => outcome_guard.failures.push((source.to_path_buf(), error)),
-        }
-    });
-
-    let outcome = outcome_mutex.into_inner().unwrap_or_else(|e| e.into_inner());
-
-    println!();
-    term::plain_line(
-        "Result:",
-        &format!("{} succeeded, {} failed", outcome.clean_paths.len(), outcome.failures.len()),
-    );
-    term::plain_line("Clean files:", &output_root.display().to_string());
-
-    if !outcome.failures.is_empty() {
-        println!();
-        term::error(&format!("{} {}", obfstr!("Failed files:"), outcome.failures.len()));
-        for (path, reason) in &outcome.failures {
-            println!("    {}", path.display());
-            println!("      {reason}");
+    if is_cache_poisoned(&outcome, acquired.source) {
+        term::error(obfstr!("Cached key failed for all files — retrying live capture..."));
+        cache::invalidate_cache(system_dir, &layout.executable);
+        if let Ok(live) =
+            acquire_profile(system_dir, &layout.executable, &candidates, PROXY_DLL, CAPTURE_TIMEOUT)
+        {
+            match live.source {
+                AcquireSource::Cache => {
+                    term::field_line(obfstr!("+ Key:"), obfstr!("from cache (retry)"))
+                }
+                AcquireSource::Live => {
+                    term::field_line(obfstr!("+ Key:"), obfstr!("captured live (retry)"))
+                }
+            }
+            acquired = live;
+            println!();
+            term::plain_label(obfstr!("Retrying decoding with live key:"));
+            outcome = do_decode(&acquired.profile);
         }
     }
 
+    report_outcome(&outcome, &output_root);
     finish(interactive);
 }
 
@@ -165,9 +206,9 @@ pub fn run_dropped_files(paths: &[PathBuf]) {
     let outcome_mutex = Mutex::new(Outcome::default());
     let completed_counter = AtomicUsize::new(0);
 
-    term::field_line("+ Files:", &format!("{} dropped files", paths.len()));
+    term::field_line(obfstr!("+ Files:"), &format!("{} dropped files", paths.len()));
     println!();
-    term::plain_label("Decoding:");
+    term::plain_label(obfstr!("Decoding:"));
 
     paths.par_iter().for_each(|path| {
         let name =
@@ -189,23 +230,7 @@ pub fn run_dropped_files(paths: &[PathBuf]) {
     });
 
     let outcome = outcome_mutex.into_inner().unwrap_or_else(|e| e.into_inner());
-
-    println!();
-    term::plain_line(
-        "Result:",
-        &format!("{} succeeded, {} failed", outcome.clean_paths.len(), outcome.failures.len()),
-    );
-    term::plain_line("Clean files:", &output_root.display().to_string());
-
-    if !outcome.failures.is_empty() {
-        println!();
-        term::error(&format!("{} {}", obfstr!("Failed files:"), outcome.failures.len()));
-        for (path, reason) in &outcome.failures {
-            println!("    {}", path.display());
-            println!("      {reason}");
-        }
-    }
-
+    report_outcome(&outcome, &output_root);
     finish(true);
 }
 
