@@ -15,7 +15,8 @@
 - Decrypts ActiveAnticheatCrypt files from the client.
 - Supports decrypting the MD5 hash manifest:  
 `%TEMP%\ActiveAnticheat\<server_id>\ft_<server_id>.dat`
-- Optionally decodes GamekitData after decryption into Lineage2Ver.
+- Provides fast parallel decoding.
+- Uses cache on reruns for instant decryption.
 
 ### Quick Start  
 Just run the program and pick your client folder, or drag and drop it onto the `.exe`.
