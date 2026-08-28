@@ -6,6 +6,9 @@ use obfstr::obfstr;
 use std::env;
 use std::path::PathBuf;
 
+use std::collections::HashSet;
+
+use decoder::client::resolve_client_layout_with_ancestors;
 use decoder::run;
 use decoder::storage::output;
 use decoder::system::{term, ui};
@@ -54,7 +57,23 @@ fn main() {
     if !files.is_empty() {
         run::run_dropped_files(&files);
     }
+
+    let mut seen_roots: HashSet<String> = HashSet::new();
     for directory in &directories {
-        run::run_scan(directory, true);
+        let layout = match resolve_client_layout_with_ancestors(directory) {
+            Some(l) => l,
+            None => {
+                term::error(&format!(
+                    "{} {}",
+                    obfstr!("not a client folder:"),
+                    directory.display()
+                ));
+                continue;
+            }
+        };
+        let key = layout.root.to_string();
+        if seen_roots.insert(key) {
+            run::run_scan(layout.root.as_std_path(), true);
+        }
     }
 }

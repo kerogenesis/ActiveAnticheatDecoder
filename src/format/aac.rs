@@ -24,6 +24,7 @@ pub struct RsaProfile {
     pub source: String,
     pub modulus: BigUint,
     pub private_exponent_be: Vec<u8>,
+    pub private_exponent: BigUint,
 }
 
 impl RsaProfile {
@@ -34,7 +35,8 @@ impl RsaProfile {
         }
         let mut private_exponent_be = d_le.to_vec();
         private_exponent_be.reverse();
-        Ok(Self { source: source.to_owned(), modulus, private_exponent_be })
+        let private_exponent = BigUint::from_bytes_be(&private_exponent_be);
+        Ok(Self { source: source.to_owned(), modulus, private_exponent_be, private_exponent })
     }
 }
 
@@ -70,11 +72,13 @@ fn pkcs1_v15_type2_unpad(block: &[u8]) -> Option<&[u8]> {
 /// num-bigint's `to_bytes_be` trims leading zeros, but PKCS#1 v1.5 parsing
 /// requires the full RSA block width - without the zero padding every small
 /// plaintext would be rejected at `block[0] != 0x00`.
-fn fixed_be_block(value: &BigUint, width: usize) -> Vec<u8> {
+/// Returns stack-allocated block to avoid per-file heap allocation.
+#[inline]
+fn fixed_be_block(value: &BigUint) -> [u8; RSA_BLOCK_LEN] {
     let trimmed = value.to_bytes_be();
-    let mut block = vec![0u8; width];
-    let copy_len = trimmed.len().min(width);
-    block[width - copy_len..].copy_from_slice(&trimmed[trimmed.len() - copy_len..]);
+    let mut block = [0u8; RSA_BLOCK_LEN];
+    let copy_len = trimmed.len().min(RSA_BLOCK_LEN);
+    block[RSA_BLOCK_LEN - copy_len..].copy_from_slice(&trimmed[trimmed.len() - copy_len..]);
     block
 }
 
@@ -91,9 +95,8 @@ pub fn decode_with_profile(file_bytes: &[u8], profile: &RsaProfile) -> Result<De
     if ciphertext >= profile.modulus {
         return Err(Error::CiphertextOutOfRange);
     }
-    let exponent = BigUint::from_bytes_be(&profile.private_exponent_be);
-    let decrypted = ciphertext.modpow(&exponent, &profile.modulus);
-    let block = fixed_be_block(&decrypted, RSA_BLOCK_LEN);
+    let decrypted = ciphertext.modpow(&profile.private_exponent, &profile.modulus);
+    let block = fixed_be_block(&decrypted);
     let message = pkcs1_v15_type2_unpad(&block).ok_or(Error::Pkcs1PaddingInvalid)?;
     let magic = obfbytes!(b"ActiveAnticheatCrypt");
     let rc4_key: Vec<u8> = match message.len() {
@@ -172,7 +175,7 @@ mod tests {
     #[test]
     fn fixed_block_pads_leading_zeros() {
         let value = BigUint::from(8u32);
-        let block = fixed_be_block(&value, RSA_BLOCK_LEN);
+        let block = fixed_be_block(&value);
         assert_eq!(block[RSA_BLOCK_LEN - 1], 8);
         assert!(block[..RSA_BLOCK_LEN - 1].iter().all(|&b| b == 0));
     }

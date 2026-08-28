@@ -13,7 +13,7 @@ use crate::format::{aac, decode as fmt_decode, manifest};
 use crate::storage::{cache, output, scan};
 use crate::system::term;
 
-const CAPTURE_TIMEOUT: Duration = Duration::from_secs(30);
+const CAPTURE_TIMEOUT: Duration = Duration::from_secs(35);
 
 /// The C++ proxy DLL, embedded at build time (see build.rs).
 const PROXY_DLL: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/aa_proxy.dll"));
@@ -26,18 +26,68 @@ struct Outcome {
 
 fn report_outcome(outcome: &Outcome, output_root: &Path) {
     println!();
-    term::plain_line(
-        obfstr!("Result:"),
-        &format!("{} succeeded, {} failed", outcome.clean_paths.len(), outcome.failures.len()),
-    );
-    term::plain_line(obfstr!("Clean files:"), &output_root.display().to_string());
-    if !outcome.failures.is_empty() {
-        println!();
-        term::error(&format!("{} {}", obfstr!("Failed files:"), outcome.failures.len()));
-        for (path, reason) in &outcome.failures {
-            println!("    {}", path.display());
-            println!("      {reason}");
+    let total = outcome.clean_paths.len() + outcome.failures.len();
+    if total == 1 {
+        if outcome.failures.is_empty() {
+            let name = outcome.clean_paths[0]
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| outcome.clean_paths[0].display().to_string());
+            term::plain_line(obfstr!("Result:"), &format!("{name} decrypted"));
+        } else {
+            let name = outcome.failures[0]
+                .0
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| outcome.failures[0].0.display().to_string());
+            term::plain_line(obfstr!("Result:"), &format!("{name} failed"));
         }
+    } else if total == 2 && outcome.clean_paths.len() == 1 && outcome.failures.len() == 1 {
+        let ok_name = outcome.clean_paths[0]
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| outcome.clean_paths[0].display().to_string());
+        let fail_name = outcome.failures[0]
+            .0
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| outcome.failures[0].0.display().to_string());
+        term::plain_line(obfstr!("Result:"), &format!("{ok_name} decrypted, {fail_name} failed"));
+    } else if outcome.failures.is_empty() {
+        let n = outcome.clean_paths.len();
+        let msg = if n == 1 {
+            obfstr!("all 1 file decrypted").to_owned()
+        } else {
+            format!("all {n} files decrypted")
+        };
+        term::plain_line(obfstr!("Result:"), &msg);
+    } else if outcome.clean_paths.is_empty() {
+        term::plain_line(
+            obfstr!("Result:"),
+            &format!("0 decrypted, {} failed", outcome.failures.len()),
+        );
+    } else {
+        let names: Vec<String> = outcome
+            .failures
+            .iter()
+            .map(|(p, _)| {
+                p.file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| p.display().to_string())
+            })
+            .collect();
+        term::plain_line(
+            obfstr!("Result:"),
+            &format!(
+                "{} decrypted, {} failed ({})",
+                outcome.clean_paths.len(),
+                outcome.failures.len(),
+                names.join(", ")
+            ),
+        );
+    }
+    if !outcome.clean_paths.is_empty() {
+        term::plain_line(obfstr!("Clean files:"), &output_root.display().to_string());
     }
 }
 
@@ -104,11 +154,7 @@ pub fn run_scan(picked: &Path, interactive: bool) {
     let result = scan::scan_tree(root, &mut |examined| spinner.tick(examined));
     spinner.finish();
 
-    let key_origin = match acquired.source {
-        AcquireSource::Cache => obfstr!("Key from cache").to_string(),
-        AcquireSource::Live => obfstr!("Key captured live").to_string(),
-    };
-    let status = format!("{key_origin} -> Scanned tree ({} targets found)", result.aac.len());
+    let status = format!("scanned tree ({} targets found)", result.aac.len());
     term::field_line(obfstr!("+ Status:"), &status);
 
     if result.aac.is_empty() {

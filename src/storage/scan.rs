@@ -1,10 +1,10 @@
 //! Recursive discovery of ActiveAnticheatCrypt containers under a client root.
+use crate::format::aac;
+use rayon::prelude::*;
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
-
-use crate::format::aac;
 
 #[derive(Debug, Clone)]
 pub struct Found {
@@ -33,27 +33,33 @@ fn read_header(path: &Path, count: usize) -> Option<Vec<u8>> {
 }
 
 pub fn scan_tree(root: &Path, on_progress: &mut dyn FnMut(usize)) -> ScanResult {
-    let mut result = ScanResult::default();
-
+    let mut all_files: Vec<PathBuf> = Vec::new();
+    let mut files_examined = 0usize;
     for entry in WalkDir::new(root)
         .max_depth(32)
+        .follow_links(false)
         .into_iter()
         .filter_map(|r| r.map_err(|e| eprintln!("scan: walk error: {e}")).ok())
     {
         if entry.file_type().is_file() {
-            result.files_examined += 1;
-            let path = entry.path();
-            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
-
-            if size > aac::PAYLOAD_OFFSET as u64
-                && let Some(header) = read_header(path, 20)
-                && aac::header_is_aac(&header)
-            {
-                result.aac.push(Found { path: path.to_path_buf() });
-            }
-            on_progress(result.files_examined);
+            files_examined += 1;
+            all_files.push(entry.path().to_path_buf());
+            on_progress(files_examined);
         }
     }
 
-    result
+    // parallel header check
+    let aac: Vec<Found> = all_files
+        .par_iter()
+        .filter_map(|path| {
+            let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+            if size <= aac::PAYLOAD_OFFSET as u64 {
+                return None;
+            }
+            let header = read_header(path, 20)?;
+            if aac::header_is_aac(&header) { Some(Found { path: path.clone() }) } else { None }
+        })
+        .collect();
+
+    ScanResult { aac, files_examined }
 }

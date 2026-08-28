@@ -8,6 +8,7 @@ use obfstr::obfstr;
 use std::fmt;
 use std::io::Read;
 use std::path::Path;
+use std::sync::LazyLock;
 
 const GAMEKIT_HEADER: &[u8; 22] = b"G\0a\0m\0e\0k\0i\0t\0D\0a\0t\0a\0";
 const LINEAGE2_HEADER: &[u8; 22] = b"L\0i\0n\0e\0a\0g\0e\x002\0V\0e\0r\0";
@@ -40,6 +41,11 @@ const RSA_MODULUS_KEY2: [u8; 128] = [
 const MAGIC_121_VTX: [u8; 4] = [0xC1, 0x83, 0x2A, 0x9E];
 const MAGIC_121_OGG: [u8; 4] = *b"OggS";
 const MAGIC_121_L2SD: [u8; 4] = *b"L2SD";
+
+static MOD1: LazyLock<BigUint> = LazyLock::new(|| BigUint::from_bytes_le(&RSA_MODULUS_KEY1));
+static MOD2: LazyLock<BigUint> = LazyLock::new(|| BigUint::from_bytes_le(&RSA_MODULUS_KEY2));
+static EXP_29: LazyLock<BigUint> = LazyLock::new(|| BigUint::from(29u32));
+static EXP_53: LazyLock<BigUint> = LazyLock::new(|| BigUint::from(53u32));
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FormatType {
@@ -202,12 +208,7 @@ fn decrypt_413(payload: &[u8]) -> Result<Vec<u8>> {
     if payload.len() >= 128 {
         let block_count = payload.len() / 128;
         if block_count > 0 {
-            let mod1 = BigUint::from_bytes_le(&RSA_MODULUS_KEY1);
-            let mod2 = BigUint::from_bytes_le(&RSA_MODULUS_KEY2);
-            let exp_29 = BigUint::from(29u32);
-            let exp_53 = BigUint::from(53u32);
-
-            for (exp, modulus) in [(&exp_29, &mod1), (&exp_53, &mod2)] {
+            for (exp, modulus) in [(&*EXP_29, &*MOD1), (&*EXP_53, &*MOD2)] {
                 let mut reconstructed_zlib = Vec::with_capacity(block_count * 124);
                 let mut ok = true;
                 for idx in 0..block_count {

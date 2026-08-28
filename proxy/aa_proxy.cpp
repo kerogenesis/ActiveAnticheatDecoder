@@ -8,6 +8,7 @@
 #include <Windows.h>
 
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -21,9 +22,6 @@ constexpr SIZE_T kOverlap = kContextSize - 1;
 constexpr SIZE_T kMaxRegionSize = 128u * 1024u * 1024u;
 constexpr SIZE_T kMaxMpiBytes = 256;
 
-// Modulus and private exponent as raw little-endian limbs, byte-for-byte as
-// they sit in the client's memory -- exactly the `N_LE=` / `D_LE=` values the
-// old aac_rsa.log carried.
 struct RsaKey {
     std::vector<uint8_t> n_le;
     std::vector<uint8_t> d_le;
@@ -38,12 +36,14 @@ uint32_t ReadU32(const uint8_t* p, size_t at) {
            (static_cast<uint32_t>(p[at + 2]) << 16) | (static_cast<uint32_t>(p[at + 3]) << 24);
 }
 
-// Read `len` bytes from our own process.
 bool ReadExact(uintptr_t address, uint8_t* out, size_t len) {
-    SIZE_T read = 0;
-    return ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<LPCVOID>(address), out, len,
-                             &read) &&
-           read == len;
+    __try {
+        const void* src = reinterpret_cast<const void*>(address);
+        memmove(out, src, len);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
 }
 
 bool DescriptorMatches(const uint8_t* ctx, size_t offset, uint16_t expected) {
@@ -93,18 +93,20 @@ bool IsReadable(DWORD protect) {
     }
 }
 
-// Sweep one committed region, reading it in overlapping chunks so a context
-// straddling a chunk boundary is still found.
 bool ScanRegion(uintptr_t base, size_t size, RsaKey& key) {
     std::vector<uint8_t> buffer(kChunkSize + kOverlap);
     size_t offset = 0;
     while (offset < size) {
         size_t remaining = size - offset;
         size_t wanted = remaining < buffer.size() ? remaining : buffer.size();
-        SIZE_T read = 0;
-        if (ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<LPCVOID>(base + offset),
-                              buffer.data(), wanted, &read) &&
-            read >= kContextSize) {
+        size_t read = 0;
+        if (ReadExact(base + offset, buffer.data(), wanted)) {
+            read = wanted;
+        } else {
+            offset += 4096;
+            continue;
+        }
+        if (read >= kContextSize) {
             for (size_t local = 0; local + kContextSize <= read; local += 4) {
                 const uint8_t* ctx = buffer.data() + local;
                 if (ContextMatches(ctx) && ExtractKey(ctx, key)) {
@@ -120,8 +122,6 @@ bool ScanRegion(uintptr_t base, size_t size, RsaKey& key) {
     return false;
 }
 
-// Walk every committed, readable region of our own process. Returns the first
-// key that fully resolves.
 bool FindRsaKey(RsaKey& key) {
     SYSTEM_INFO info{};
     GetSystemInfo(&info);
@@ -177,15 +177,27 @@ void SendKey(const RsaKey& key) {
 }
 
 DWORD WINAPI CaptureThread(LPVOID) {
-    // The RSA context only exists once the client has finished start-up, so the
-    // first sweeps usually miss; poll with tight interval to avoid worst-case.
-    for (int attempt = 0; attempt < 60; ++attempt) {
+    const DWORD kModuleWaitMs = 30000;
+    const ULONGLONG start = GetTickCount64();
+    bool clmodsReady = false;
+    while (GetTickCount64() - start < kModuleWaitMs) {
+        if (GetModuleHandleW(L"clmods.dll")) {
+            clmodsReady = true;
+            break;
+        }
+        Sleep(120);
+    }
+    if (!clmodsReady) {
+        return 0;
+    }
+    Sleep(200);
+    for (int attempt = 0; attempt < 180; ++attempt) {
         RsaKey key;
         if (FindRsaKey(key)) {
             SendKey(key);
             return 0;
         }
-        Sleep(200);
+        Sleep(150);
     }
     return 0;
 }

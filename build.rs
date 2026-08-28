@@ -23,6 +23,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 fn main() {
+    println!("cargo:rerun-if-changed=proxy/aa_proxy.cpp");
+    println!("cargo:rerun-if-changed=proxy/vendor/UltimateProxyDLL.h");
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR is always set by cargo"));
     stage_proxy_dll(&out_dir);
     #[cfg(windows)]
@@ -80,9 +82,8 @@ fn embed_windows_icon(out_dir: &Path) {
         }
     };
 
-    // Resource 1 is the lowest id, which is the icon Explorer shows for the
-    // application. Forward slashes sidestep backslash-escaping inside the .rc
-    // string.
+    // Resource 1 is the lowest id,
+    // which is the icon Explorer shows for the application.
     let icon_ref = icon_path.display().to_string().replace('\\', "/");
     let script = out_dir.join("app.rc");
     fs::write(&script, format!("1 ICON \"{icon_ref}\"\n")).expect("cannot write the icon script");
@@ -106,8 +107,8 @@ fn embed_windows_icon(out_dir: &Path) {
     }
 }
 
-/// Release builds must ship the icon, so they set `AA_REQUIRE_ICON` to turn a
-/// skipped icon into a build failure.
+/// Release builds must ship the icon, so they set `AA_REQUIRE_ICON`
+/// to turn a skipped icon into a build failure.
 #[cfg(windows)]
 fn icon_is_required() -> bool {
     match env::var("AA_REQUIRE_ICON") {
@@ -130,8 +131,6 @@ fn find_resource_compiler() -> Option<PathBuf> {
         return Some(PathBuf::from(explicit));
     }
 
-    // A Developer Command Prompt (or vcvars in the same shell) puts rc.exe on
-    // PATH; spawning it is the cheapest way to ask whether that is the case.
     let on_path = Command::new("rc.exe")
         .arg("/?")
         .stdin(Stdio::null())
@@ -146,12 +145,8 @@ fn find_resource_compiler() -> Option<PathBuf> {
     newest_sdk_resource_compiler()
 }
 
-/// Finds the newest `rc.exe` in the installed Windows Kits, which is where the
-/// SDK puts it when nothing set up the MSVC environment for us.
 #[cfg(windows)]
 fn newest_sdk_resource_compiler() -> Option<PathBuf> {
-    // The host architecture runs the tool; the resource itself is
-    // architecture-independent, so this is unrelated to our i686 target.
     let host = match env::consts::ARCH {
         "x86" => "x86",
         "aarch64" => "arm64",

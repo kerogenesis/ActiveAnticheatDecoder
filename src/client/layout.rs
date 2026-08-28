@@ -64,3 +64,18 @@ pub fn resolve_client_layout(picked: &std::path::Path) -> Option<ClientLayout> {
 
     None
 }
+
+pub fn resolve_client_layout_with_ancestors(picked: &std::path::Path) -> Option<ClientLayout> {
+    let mut cur: Option<&std::path::Path> = Some(picked);
+    for _ in 0..4 {
+        if let Some(p) = cur {
+            if let Some(layout) = resolve_client_layout(p) {
+                return Some(layout);
+            }
+            cur = p.parent();
+        } else {
+            break;
+        }
+    }
+    None
+}

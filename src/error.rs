@@ -102,7 +102,7 @@ pub enum Error {
     )]
     DroppedAacNeedsClient,
 
-    #[error("not an ft_ file and not an ActiveAnticheatCrypt container")]
+    #[error("not an ActiveAnticheatCrypt container")]
     DroppedUnknownFormat,
 
     #[error("GamekitData payload decoding failed")]
