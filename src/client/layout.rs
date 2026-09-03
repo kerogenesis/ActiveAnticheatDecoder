@@ -16,8 +16,7 @@ impl ClientLayout {
     }
 }
 
-pub fn resolve_client_layout(picked: &std::path::Path) -> Option<ClientLayout> {
-    let picked = Utf8Path::from_path(picked)?;
+fn resolve_shallow(picked: &Utf8Path) -> Option<ClientLayout> {
     let sys_dir_name = obfstr!("system").to_owned();
     let l2_exe_name = obfstr!("l2.exe").to_owned();
     let scryde_dir_name = obfstr!("Scryde").to_owned();
@@ -47,12 +46,20 @@ pub fn resolve_client_layout(picked: &std::path::Path) -> Option<ClientLayout> {
         }
     }
 
+    None
+}
+
+fn walk_for_executable(picked: &Utf8Path) -> Option<ClientLayout> {
+    let l2_exe_name = obfstr!("l2.exe").to_owned();
+    let scryde_exe_name = obfstr!("ScrydeGame.exe").to_owned();
+    let exes = [&l2_exe_name, &scryde_exe_name];
+
     for entry in WalkDir::new(picked).max_depth(32).into_iter().filter_map(Result::ok) {
         if entry.file_type().is_file()
             && let Some(utf8_path) = Utf8Path::from_path(entry.path())
             && let Some(name) = utf8_path.file_name()
         {
-            for (_, exe) in &layouts {
+            for exe in &exes {
                 if name.eq_ignore_ascii_case(exe) {
                     let system_dir = utf8_path.parent().unwrap_or(picked).to_path_buf();
                     let root = system_dir.parent().unwrap_or(&system_dir).to_path_buf();
@@ -65,17 +72,23 @@ pub fn resolve_client_layout(picked: &std::path::Path) -> Option<ClientLayout> {
     None
 }
 
+pub fn resolve_client_layout(picked: &std::path::Path) -> Option<ClientLayout> {
+    let picked = Utf8Path::from_path(picked)?;
+    resolve_shallow(picked).or_else(|| walk_for_executable(picked))
+}
+
 pub fn resolve_client_layout_with_ancestors(picked: &std::path::Path) -> Option<ClientLayout> {
-    let mut cur: Option<&std::path::Path> = Some(picked);
+    let mut top = picked;
     for _ in 0..4 {
-        if let Some(p) = cur {
-            if let Some(layout) = resolve_client_layout(p) {
-                return Some(layout);
-            }
-            cur = p.parent();
-        } else {
-            break;
+        let Some(utf8) = Utf8Path::from_path(top) else { break };
+        if let Some(layout) = resolve_shallow(utf8) {
+            return Some(layout);
+        }
+        match top.parent() {
+            Some(parent) => top = parent,
+            None => break,
         }
     }
-    None
+    let utf8 = Utf8Path::from_path(picked)?;
+    walk_for_executable(utf8)
 }

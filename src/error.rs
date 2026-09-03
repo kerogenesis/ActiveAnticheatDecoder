@@ -17,7 +17,7 @@ impl std::fmt::Display for IoAction {
         match self {
             Self::Read => f.write_str("read"),
             Self::Write => f.write_str("write"),
-            Self::CreateDir => f.write_str("create"),
+            Self::CreateDir => f.write_str("create directory"),
         }
     }
 }
@@ -58,8 +58,8 @@ pub enum Error {
     )]
     ProtectedEnvironment { override_name: String },
 
-    #[error("modulus is zero")]
-    ModulusZero,
+    #[error("RSA modulus is zero or even")]
+    InvalidModulus,
 
     #[error("{name} not found")]
     MissingKeyComponent { name: &'static str },

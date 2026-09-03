@@ -59,11 +59,15 @@ impl<'a> Cursor<'a> {
     }
 
     fn u32(&mut self, what: &'static str) -> Result<u32> {
-        Ok(u32::from_le_bytes(self.take(4, what)?.try_into().unwrap()))
+        let bytes = self.take(4, what)?;
+        let array: [u8; 4] = bytes.try_into().map_err(|_| Error::ManifestEof { what })?;
+        Ok(u32::from_le_bytes(array))
     }
 
     fn u16(&mut self, what: &'static str) -> Result<u16> {
-        Ok(u16::from_le_bytes(self.take(2, what)?.try_into().unwrap()))
+        let bytes = self.take(2, what)?;
+        let array: [u8; 2] = bytes.try_into().map_err(|_| Error::ManifestEof { what })?;
+        Ok(u16::from_le_bytes(array))
     }
 }
 

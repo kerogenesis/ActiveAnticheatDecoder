@@ -38,8 +38,9 @@ fn stage_proxy_dll(out_dir: &Path) {
         Some(path) => {
             let path = PathBuf::from(path);
             println!("cargo:rerun-if-changed={}", path.display());
-            let bytes = fs::read(&path)
-                .unwrap_or_else(|error| panic!("cannot read AA_PROXY_DLL at {path:?}: {error}"));
+            let bytes = fs::read(&path).unwrap_or_else(|error| {
+                panic!("cannot read AA_PROXY_DLL at {path}: {error}", path = path.display())
+            });
             fs::write(&destination, bytes).expect("cannot stage the embedded proxy DLL");
         }
         None => {
@@ -70,16 +71,13 @@ fn embed_windows_icon(out_dir: &Path) {
         return;
     }
 
-    let compiler = match find_resource_compiler() {
-        Some(compiler) => compiler,
-        None => {
-            report_icon_failure(
-                required,
-                "cannot find rc.exe: install the Windows SDK, build from a Developer Command \
-                 Prompt, or point AA_RC_EXE at it",
-            );
-            return;
-        }
+    let Some(compiler) = find_resource_compiler() else {
+        report_icon_failure(
+            required,
+            "cannot find rc.exe: install the Windows SDK, build from a Developer Command \
+             Prompt, or point AA_RC_EXE at it",
+        );
+        return;
     };
 
     // Resource 1 is the lowest id,
@@ -119,9 +117,7 @@ fn icon_is_required() -> bool {
 
 #[cfg(windows)]
 fn report_icon_failure(required: bool, reason: &str) {
-    if required {
-        panic!("cannot embed the application icon: {reason}");
-    }
+    assert!(!required, "cannot embed the application icon: {reason}");
     println!("cargo:warning=skipping icon: {reason}");
 }
 
@@ -165,18 +161,12 @@ fn newest_sdk_resource_compiler() -> Option<PathBuf> {
 
     let mut candidates: Vec<(Vec<u64>, PathBuf)> = Vec::new();
     for root in &roots {
-        let entries = match fs::read_dir(root) {
-            Ok(entries) => entries,
-            Err(_) => continue,
-        };
+        let Ok(entries) = fs::read_dir(root) else { continue };
 
         for entry in entries.flatten() {
             // The versioned layout is <kit>\bin\<sdk version>\<host arch>\rc.exe.
             let name = entry.file_name();
-            let version = match sdk_version_key(&name.to_string_lossy()) {
-                Some(version) => version,
-                None => continue,
-            };
+            let Some(version) = sdk_version_key(&name.to_string_lossy()) else { continue };
             let compiler = entry.path().join(host).join("rc.exe");
             if compiler.is_file() {
                 candidates.push((version, compiler));
@@ -194,8 +184,6 @@ fn newest_sdk_resource_compiler() -> Option<PathBuf> {
     candidates.pop().map(|(_, compiler)| compiler)
 }
 
-/// Parses `10.0.22621.0` into a comparable key, rejecting anything that is not a
-/// dotted version so unrelated directories are ignored.
 #[cfg(windows)]
 fn sdk_version_key(version: &str) -> Option<Vec<u64>> {
     version.split('.').map(|part| part.parse::<u64>().ok()).collect()

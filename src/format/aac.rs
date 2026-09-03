@@ -23,7 +23,6 @@ pub fn is_aac_container(bytes: &[u8]) -> bool {
 pub struct RsaProfile {
     pub source: String,
     pub modulus: BigUint,
-    pub private_exponent_be: Vec<u8>,
     pub private_exponent: BigUint,
 }
 
@@ -31,12 +30,10 @@ impl RsaProfile {
     pub fn from_le_components(source: &str, n_le: &[u8], d_le: &[u8]) -> Result<Self> {
         let modulus = BigUint::from_bytes_le(n_le);
         if modulus.bits() == 0 || !modulus.bit(0) {
-            return Err(Error::ModulusZero);
+            return Err(Error::InvalidModulus);
         }
-        let mut private_exponent_be = d_le.to_vec();
-        private_exponent_be.reverse();
-        let private_exponent = BigUint::from_bytes_be(&private_exponent_be);
-        Ok(Self { source: source.to_owned(), modulus, private_exponent_be, private_exponent })
+        let private_exponent = BigUint::from_bytes_le(d_le);
+        Ok(Self { source: source.to_owned(), modulus, private_exponent })
     }
 }
 
@@ -149,7 +146,7 @@ mod tests {
         let text = "N_LE=0100\nD_LE=0300\n";
         let profile = parse_rsa_log(text, "test").unwrap();
         assert_eq!(profile.source, "test");
-        assert_eq!(profile.private_exponent_be, vec![0x00, 0x03]);
+        assert_eq!(profile.private_exponent, BigUint::from(3u32));
         assert_ne!(profile.modulus, BigUint::default());
     }
 
@@ -158,12 +155,12 @@ mod tests {
         let from_log = parse_rsa_log("N_LE=0100\nD_LE=0300\n", "log").unwrap();
         let from_mem = RsaProfile::from_le_components("mem", &[0x01, 0x00], &[0x03, 0x00]).unwrap();
         assert_eq!(from_log.modulus, from_mem.modulus);
-        assert_eq!(from_log.private_exponent_be, from_mem.private_exponent_be);
+        assert_eq!(from_log.private_exponent, from_mem.private_exponent);
     }
 
     #[test]
     fn even_modulus_is_rejected() {
-        // N_LE=0100 is odd; N_LE=0200 is even -> rejected with ModulusZero.
+        // N_LE=0100 is odd; N_LE=0200 is even -> rejected with InvalidModulus.
         assert!(RsaProfile::from_le_components("mem", &[0x02, 0x00], &[0x01]).is_err());
     }
 

@@ -112,12 +112,15 @@ pub fn capture_key(
 }
 
 fn write_proxy(system_dir: &Path, candidates: &[String], bytes: &[u8]) -> Result<PathBuf> {
+    use std::io::Write as _;
     for name in candidates {
         let path = system_dir.join(name);
-        if path.exists() {
-            continue;
-        }
-        std::fs::write(&path, bytes).map_err(|source| Error::io(IoAction::Write, &path, source))?;
+        let mut file = match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(source) => return Err(Error::io(IoAction::Write, &path, source)),
+        };
+        file.write_all(bytes).map_err(|source| Error::io(IoAction::Write, &path, source))?;
         return Ok(path);
     }
     Err(Error::ProxyNamesTaken)
@@ -217,6 +220,10 @@ fn capture(
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
+
+    if captured.is_none() {
+        captured = rx.try_recv().ok();
+    }
     let job_to_close = JOB_HANDLE.swap(0, Ordering::SeqCst);
     let job = if job_to_close != 0 { OwnedHandle::from_raw(job_to_close as HANDLE) } else { None };
     unsafe {
@@ -266,8 +273,11 @@ fn launch_suspended(client: &Path, cwd: &Path, job: HANDLE) -> Result<(OwnedHand
         return Err(Error::ProcessStart { path: client.to_path_buf(), code: 0 });
     };
     if !job.is_null() && job != INVALID_HANDLE_VALUE {
-        unsafe {
-            AssignProcessToJobObject(job, process.as_raw());
+        let assigned = unsafe { AssignProcessToJobObject(job, process.as_raw()) };
+        if assigned == 0 {
+            eprintln!(
+                "warn: could not attach the client to the cleanup job; child processes may survive the timeout"
+            );
         }
     }
     Ok((process, main_thread))

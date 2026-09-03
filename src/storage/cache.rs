@@ -1,6 +1,6 @@
 //! File-backed cache for RSA profiles.
 //!
-//! Key = SHA1(len + head 512K + tail 512K of `clmods.dll` truncated to 8 bytes)
+//! Key = SHA1(len + head 512K + tail 512K of `clmods.dll`)
 //!       fallback: client exe or sorted `system` dir listing.
 //! Value = (N_LE hex, D_LE hex) captured via live proxy.
 //! On next run we try cached profile before injecting; poisoned cache is
@@ -11,7 +11,7 @@ use std::path::Path;
 
 use obfstr::obfstr;
 
-use crate::crypto::hex::hex_to_bytes;
+use crate::crypto::hex::{hex_to_bytes, to_hex};
 use crate::format::aac;
 use sha1::{Digest, Sha1};
 
@@ -25,8 +25,15 @@ fn hash_file(path: &Path) -> Option<String> {
     hasher.update(len.to_le_bytes());
 
     let mut buf = vec![0u8; 512 * 1024];
-    let n = file.read(&mut buf).ok()?;
-    hasher.update(&buf[..n]);
+    let mut filled = 0usize;
+    while filled < buf.len() {
+        match file.read(&mut buf[filled..]) {
+            Ok(0) => break,
+            Ok(n) => filled += n,
+            Err(_) => return None,
+        }
+    }
+    hasher.update(&buf[..filled]);
 
     if len > 1024 * 1024 {
         let tail_size = (512 * 1024).min(len as usize);
@@ -43,11 +50,7 @@ fn hash_file(path: &Path) -> Option<String> {
         }
     }
     let digest = hasher.finalize();
-    // 16 hex = 8 bytes of SHA-1, enough for cache key
-    Some(format!(
-        "{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-        digest[0], digest[1], digest[2], digest[3], digest[4], digest[5], digest[6], digest[7]
-    ))
+    Some(to_hex(&digest))
 }
 
 pub fn cache_key(system_dir: &Path, client_exe: &str) -> String {
@@ -66,16 +69,10 @@ pub fn cache_key(system_dir: &Path, client_exe: &str) -> String {
             }
             hasher.update(&buf[..n]);
             any = true;
-            if any && n < buf.len() {
-                break;
-            }
         }
         if any {
             let d = hasher.finalize();
-            return format!(
-                "{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-                d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7]
-            );
+            return to_hex(&d);
         }
     }
     // fallback: SHA-1 of sorted file names
@@ -91,10 +88,7 @@ pub fn cache_key(system_dir: &Path, client_exe: &str) -> String {
             hasher.update(b"\0");
         }
         let d = hasher.finalize();
-        return format!(
-            "{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-            d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7]
-        );
+        return to_hex(&d);
     }
     "unknown".to_owned()
 }
@@ -134,10 +128,12 @@ pub fn save_cached_profile(system_dir: &Path, client_exe: &str, profile: &aac::R
     }
     let n_le_hex =
         profile.modulus.to_bytes_le().iter().map(|b| format!("{b:02x}")).collect::<String>();
-    // private_exponent_be is BE, convert back to LE for storage
-    let mut d_le = profile.private_exponent_be.clone();
-    d_le.reverse();
-    let d_le_hex = d_le.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let d_le_hex = profile
+        .private_exponent
+        .to_bytes_le()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
     let content = format!("{n_le_hex}\n{d_le_hex}\n");
     let _ = std::fs::write(&path, content.as_bytes());
 }
@@ -174,5 +170,21 @@ mod tests {
         assert_eq!(path.file_name().unwrap().to_string_lossy(), "rsa_abcdef1234567890.bin");
         assert!(!path.to_string_lossy().contains("aa_key_cache"));
         assert!(!path.to_string_lossy().contains("clmods_"));
+    }
+    #[test]
+    fn cached_profile_roundtrips_through_disk() {
+        let dir = std::env::temp_dir().join("aac_decoder_test_cache_roundtrip");
+        let _ = std::fs::create_dir_all(&dir);
+        // Odd modulus (LSB set); small values keep the stored hex short.
+        let profile =
+            aac::RsaProfile::from_le_components("live", &[0x03, 0x01], &[0x05, 0x02]).unwrap();
+        save_cached_profile(&dir, "l2.exe", &profile);
+        let loaded = load_cached_profile(&dir, "l2.exe").expect("saved profile must load back");
+        assert_eq!(loaded.modulus, profile.modulus);
+        assert_eq!(loaded.private_exponent, profile.private_exponent);
+        assert_eq!(loaded.source, "cache");
+        invalidate_cache(&dir, "l2.exe");
+        assert!(load_cached_profile(&dir, "l2.exe").is_none());
+        let _ = std::fs::remove_dir(&dir);
     }
 }

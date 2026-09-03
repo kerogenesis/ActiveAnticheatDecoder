@@ -24,34 +24,26 @@ struct Outcome {
     failures: Vec<(PathBuf, Error)>,
 }
 
+fn short_name(path: &Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
+}
+
 fn report_outcome(outcome: &Outcome, output_root: &Path) {
     println!();
     let total = outcome.clean_paths.len() + outcome.failures.len();
     if total == 1 {
         if outcome.failures.is_empty() {
-            let name = outcome.clean_paths[0]
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| outcome.clean_paths[0].display().to_string());
+            let name = short_name(&outcome.clean_paths[0]);
             term::plain_line(obfstr!("Result:"), &format!("{name} decrypted"));
         } else {
-            let name = outcome.failures[0]
-                .0
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| outcome.failures[0].0.display().to_string());
+            let name = short_name(&outcome.failures[0].0);
             term::plain_line(obfstr!("Result:"), &format!("{name} failed"));
         }
     } else if total == 2 && outcome.clean_paths.len() == 1 && outcome.failures.len() == 1 {
-        let ok_name = outcome.clean_paths[0]
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| outcome.clean_paths[0].display().to_string());
-        let fail_name = outcome.failures[0]
-            .0
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| outcome.failures[0].0.display().to_string());
+        let ok_name = short_name(&outcome.clean_paths[0]);
+        let fail_name = short_name(&outcome.failures[0].0);
         term::plain_line(obfstr!("Result:"), &format!("{ok_name} decrypted, {fail_name} failed"));
     } else if outcome.failures.is_empty() {
         let n = outcome.clean_paths.len();
@@ -67,15 +59,7 @@ fn report_outcome(outcome: &Outcome, output_root: &Path) {
             &format!("0 decrypted, {} failed", outcome.failures.len()),
         );
     } else {
-        let names: Vec<String> = outcome
-            .failures
-            .iter()
-            .map(|(p, _)| {
-                p.file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| p.display().to_string())
-            })
-            .collect();
+        let names: Vec<String> = outcome.failures.iter().map(|(p, _)| short_name(p)).collect();
         term::plain_line(
             obfstr!("Result:"),
             &format!(

@@ -1,20 +1,7 @@
 //! Decoder library for `ActiveAnticheat` files.
-
-#![warn(clippy::pedantic)]
-#![allow(clippy::module_name_repetitions)]
-#![allow(clippy::doc_markdown)]
-#![allow(clippy::missing_errors_doc)]
-#![allow(clippy::missing_panics_doc)]
-#![allow(clippy::must_use_candidate)]
-#![allow(clippy::cast_possible_truncation)]
-#![allow(clippy::cast_possible_wrap)]
-#![allow(clippy::too_many_lines)]
-#![allow(clippy::borrow_as_ptr)]
-#![allow(clippy::map_unwrap_or)]
-#![allow(clippy::redundant_closure_for_method_calls)]
-#![allow(clippy::implicit_clone)]
-#![allow(clippy::format_collect)]
-#![allow(clippy::semicolon_if_nothing_returned)]
+//!
+//! Lint gates live in `Cargo.toml` (`[lints.clippy]`) so they apply to the
+//! library, the binary and `build.rs` alike.
 
 pub mod capture;
 pub mod client;

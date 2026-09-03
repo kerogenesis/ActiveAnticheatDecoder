@@ -33,6 +33,10 @@ fn parse_ini_key(text: &str, target_key: &str) -> Option<String> {
     None
 }
 
+fn read_config(config_path: &Path) -> Option<String> {
+    std::fs::read_to_string(config_path).ok()
+}
+
 fn candidates_from(configured: Option<String>) -> Vec<String> {
     let mut names = Vec::new();
     if let Some(name) = configured {
@@ -49,16 +53,14 @@ fn candidates_from(configured: Option<String>) -> Vec<String> {
 }
 
 pub fn proxy_candidates(config_path: &Path) -> Vec<String> {
-    let configured = std::fs::read_to_string(config_path)
-        .ok()
+    let configured = read_config(config_path)
         .and_then(|text| parse_ini_key(&text, obfstr!("proxy_name")))
         .unwrap_or_else(|| obfstr!("ddraw.dll").to_owned());
     candidates_from(Some(configured))
 }
 
 pub fn scryde_gamekitdata_auto_decode(config_path: &Path) -> bool {
-    std::fs::read_to_string(config_path)
-        .ok()
+    read_config(config_path)
         .and_then(|text| parse_ini_key(&text, obfstr!("scryde_gamekitdata_auto_decode")))
         .map(|val| !matches!(val.trim().to_lowercase().as_str(), "false" | "0" | "no"))
         .unwrap_or(true)

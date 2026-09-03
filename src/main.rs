@@ -60,20 +60,21 @@ fn main() {
 
     let mut seen_roots: HashSet<String> = HashSet::new();
     for directory in &directories {
-        let layout = match resolve_client_layout_with_ancestors(directory) {
-            Some(l) => l,
-            None => {
-                term::error(&format!(
-                    "{} {}",
-                    obfstr!("not a client folder:"),
-                    directory.display()
-                ));
-                continue;
-            }
+        let Some(layout) = resolve_client_layout_with_ancestors(directory) else {
+            term::error(&format!("{} {}", obfstr!("not a client folder:"), directory.display()));
+            continue;
         };
-        let key = layout.root.to_string();
+        // Windows paths are case-insensitive: `C:\Client` and `c:\client\`
+        // are the same folder, so normalize before dedup to avoid scanning
+        // (and capturing the key for) one client twice.
+        let key = normalize_root_key(layout.root.as_str());
         if seen_roots.insert(key) {
             run::run_scan(layout.root.as_std_path(), true);
         }
     }
+}
+
+/// Lowercase, slash-normalized root key for dedup on Windows.
+fn normalize_root_key(root: &str) -> String {
+    root.replace('/', "\\").trim_end_matches('\\').to_lowercase()
 }
