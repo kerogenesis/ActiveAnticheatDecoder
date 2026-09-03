@@ -93,8 +93,7 @@ bool IsReadable(DWORD protect) {
     }
 }
 
-bool ScanRegion(uintptr_t base, size_t size, RsaKey& key) {
-    std::vector<uint8_t> buffer(kChunkSize + kOverlap);
+bool ScanRegion(uintptr_t base, size_t size, RsaKey& key, std::vector<uint8_t>& buffer) {
     size_t offset = 0;
     while (offset < size) {
         size_t remaining = size - offset;
@@ -123,6 +122,7 @@ bool ScanRegion(uintptr_t base, size_t size, RsaKey& key) {
 }
 
 bool FindRsaKey(RsaKey& key) {
+    std::vector<uint8_t> buffer(kChunkSize + kOverlap);
     SYSTEM_INFO info{};
     GetSystemInfo(&info);
     uintptr_t cursor = reinterpret_cast<uintptr_t>(info.lpMinimumApplicationAddress);
@@ -140,7 +140,7 @@ bool FindRsaKey(RsaKey& key) {
         }
         if (region.State == MEM_COMMIT && IsReadable(region.Protect) &&
             region.RegionSize >= kContextSize && region.RegionSize <= kMaxRegionSize) {
-            if (ScanRegion(regionBase, region.RegionSize, key)) {
+            if (ScanRegion(regionBase, region.RegionSize, key, buffer)) {
                 return true;
             }
         }

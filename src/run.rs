@@ -13,7 +13,7 @@ use crate::format::{aac, decode as fmt_decode, manifest};
 use crate::storage::{cache, output, scan};
 use crate::system::term;
 
-const CAPTURE_TIMEOUT: Duration = Duration::from_secs(35);
+const CAPTURE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// The C++ proxy DLL, embedded at build time (see build.rs).
 const PROXY_DLL: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/aa_proxy.dll"));
