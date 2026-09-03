@@ -105,9 +105,9 @@ pub fn parse(data: &[u8]) -> Result<Manifest> {
     Ok(Manifest { records })
 }
 
-pub fn format(manifest: &Manifest) -> String {
+pub fn format_manifest(manifest: &Manifest) -> String {
     let mut text = String::new();
-    let _ = writeln!(text, "files: {}\n", manifest.records.len());
+    let _ = writeln!(text, "files: {}", manifest.records.len());
     for record in &manifest.records {
         let _ = writeln!(
             text,
@@ -124,7 +124,7 @@ pub fn format(manifest: &Manifest) -> String {
 pub fn decode(file_bytes: &[u8]) -> Result<String> {
     let plain = rc4::crypt(file_bytes, &hash_manifest_key());
     let manifest = parse(&plain)?;
-    Ok(format(&manifest))
+    Ok(format_manifest(&manifest))
 }
 
 #[cfg(test)]

@@ -53,7 +53,7 @@ pub fn detect_format(data: &[u8]) -> Option<FormatType> {
 }
 
 pub fn convert_to_lineage2(data: &[u8]) -> Option<Vec<u8>> {
-    let _format = detect_format(data)?;
+    detect_format(data)?;
     let mut converted = data.to_vec();
     if converted.len() >= 22 && &converted[..22] == GAMEKIT_HEADER {
         converted[..22].copy_from_slice(LINEAGE2_HEADER);

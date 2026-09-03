@@ -137,6 +137,9 @@ pub fn run_scan(picked: &Path, interactive: bool) {
     let mut spinner = term::Spinner::new(obfstr!("scanning tree"));
     let result = scan::scan_tree(root, &mut |examined| spinner.tick(examined));
     spinner.finish();
+    for error in &result.walk_errors {
+        term::error(&format!("{} {error}", obfstr!("scan walk error:")));
+    }
 
     let status = format!("scanned tree ({} targets found)", result.aac.len());
     term::field_line(obfstr!("+ Status:"), &status);
@@ -150,7 +153,6 @@ pub fn run_scan(picked: &Path, interactive: bool) {
 
     // Helper to run parallel decode with a given profile.
     let do_decode = |profile: &aac::RsaProfile| -> Outcome {
-        let profiles = [profile.clone()];
         let completed_counter = AtomicUsize::new(0);
         let outcome_mutex = Mutex::new(Outcome::default());
         result.aac.par_iter().for_each(|found| {
@@ -162,7 +164,7 @@ pub fn run_scan(picked: &Path, interactive: bool) {
                     fmt_decode::decode_aac_file(
                         source,
                         &bytes,
-                        &profiles,
+                        std::slice::from_ref(profile),
                         root,
                         &output_root,
                         auto_decode_gamekit,

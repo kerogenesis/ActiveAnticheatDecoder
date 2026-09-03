@@ -179,15 +179,15 @@ void SendKey(const RsaKey& key) {
 DWORD WINAPI CaptureThread(LPVOID) {
     const DWORD kModuleWaitMs = 30000;
     const ULONGLONG start = GetTickCount64();
-    bool clmodsReady = false;
+    bool clmods_ready = false;
     while (GetTickCount64() - start < kModuleWaitMs) {
         if (GetModuleHandleW(L"clmods.dll")) {
-            clmodsReady = true;
+            clmods_ready = true;
             break;
         }
         Sleep(120);
     }
-    if (!clmodsReady) {
+    if (!clmods_ready) {
         return 0;
     }
     Sleep(200);

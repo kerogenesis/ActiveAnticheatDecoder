@@ -9,6 +9,6 @@ pub use aac::{
 };
 pub use gamekit::{FormatType, convert_to_lineage2, detect_format};
 pub use manifest::{
-    HASH_MANIFEST_KEY_SEED, Manifest, Record, decode, format, hash_manifest_key,
+    HASH_MANIFEST_KEY_SEED, Manifest, Record, decode, format_manifest, hash_manifest_key,
     is_hash_manifest_name, parse,
 };

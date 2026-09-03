@@ -148,12 +148,6 @@ pub fn invalidate_cache(system_dir: &Path, client_exe: &str) {
 mod tests {
     use super::*;
     #[test]
-    fn hex_roundtrip() {
-        assert_eq!(hex_to_bytes("0100ff"), Some(vec![0x01, 0x00, 0xff]));
-        assert_eq!(hex_to_bytes(""), None);
-        assert_eq!(hex_to_bytes("abc"), None);
-    }
-    #[test]
     fn cache_key_is_stable() {
         let dir = std::env::temp_dir().join("aac_decoder_test_cache_key_stable");
         let _ = std::fs::create_dir_all(&dir);

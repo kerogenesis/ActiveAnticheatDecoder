@@ -15,6 +15,7 @@ pub struct Found {
 pub struct ScanResult {
     pub aac: Vec<Found>,
     pub files_examined: usize,
+    pub walk_errors: Vec<String>,
 }
 
 fn read_header(path: &Path, count: usize) -> Option<Vec<u8>> {
@@ -35,11 +36,12 @@ fn read_header(path: &Path, count: usize) -> Option<Vec<u8>> {
 pub fn scan_tree(root: &Path, on_progress: &mut dyn FnMut(usize)) -> ScanResult {
     let mut all_files: Vec<PathBuf> = Vec::new();
     let mut files_examined = 0usize;
+    let mut walk_errors = Vec::new();
     for entry in WalkDir::new(root)
         .max_depth(32)
         .follow_links(false)
         .into_iter()
-        .filter_map(|r| r.map_err(|e| eprintln!("scan: walk error: {e}")).ok())
+        .filter_map(|r| r.map_err(|e| walk_errors.push(e.to_string())).ok())
     {
         if entry.file_type().is_file() {
             files_examined += 1;
@@ -61,5 +63,5 @@ pub fn scan_tree(root: &Path, on_progress: &mut dyn FnMut(usize)) -> ScanResult 
         })
         .collect();
 
-    ScanResult { aac, files_examined }
+    ScanResult { aac, files_examined, walk_errors }
 }

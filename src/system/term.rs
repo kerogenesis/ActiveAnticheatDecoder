@@ -1,4 +1,4 @@
-//! Console colour, spinners and animations.
+//! Console color, spinners and animations.
 
 use obfstr::obfstr;
 use std::io::{self, IsTerminal, Write};
@@ -140,8 +140,8 @@ fn styled() -> bool {
     *STYLED.get().unwrap_or(&false)
 }
 
-fn paint(colour: Color, text: &str) -> String {
-    if styled() { format!("{}{text}{RESET}", colour.ansi()) } else { text.to_owned() }
+fn paint(color: Color, text: &str) -> String {
+    if styled() { format!("{}{text}{RESET}", color.ansi()) } else { text.to_owned() }
 }
 
 pub fn banner() {
