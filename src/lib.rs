@@ -1,7 +1,5 @@
-//! Decoder library for `ActiveAnticheat` files.
-//!
-//! Lint gates live in `Cargo.toml` (`[lints.clippy]`) so they apply to the
-//! library, the binary and `build.rs` alike.
+//! Decoder library for ActiveAnticheat files.
+//! Lint gates live in Cargo.toml
 
 pub mod capture;
 pub mod client;

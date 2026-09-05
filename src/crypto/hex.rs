@@ -1,7 +1,7 @@
 use std::fmt::Write as _;
 
 pub fn hex_to_bytes(text: &str) -> Option<Vec<u8>> {
-    if text.is_empty() || text.len() % 2 != 0 {
+    if text.is_empty() || !text.len().is_multiple_of(2) {
         return None;
     }
     let mut out = Vec::with_capacity(text.len() / 2);

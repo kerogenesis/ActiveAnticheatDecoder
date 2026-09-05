@@ -15,7 +15,7 @@ pub struct Acquired {
     pub source: AcquireSource,
 }
 
-/// Returns `RsaProfile` via cache or client launch
+/// Returns RsaProfile via cache or client launch
 pub fn acquire_profile(
     system_dir: &Path,
     client_exe: &str,

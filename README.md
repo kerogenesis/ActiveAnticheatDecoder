@@ -40,4 +40,11 @@ Before building from source, make sure you have installed:
 
 ### Building
 
-Use `build_release.bat` script
+Use the `build_release.bat` script, it compiles the x86 release binary,
+copies it to `bin\ActiveAnticheatDecoder.exe`.
+
+The same build works directly with cargo:
+
+```bat
+cargo build --release --target i686-pc-windows-msvc
+```

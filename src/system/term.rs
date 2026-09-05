@@ -10,6 +10,7 @@ enum Color {
     Green,
     Red,
     Yellow,
+    LightBlue,
     Dim,
 }
 
@@ -19,6 +20,7 @@ impl Color {
             Self::Green => "\x1b[32m",
             Self::Red => "\x1b[31m",
             Self::Yellow => "\x1b[33m",
+            Self::LightBlue => "\x1b[94m",
             Self::Dim => "\x1b[90m",
         }
     }
@@ -65,8 +67,7 @@ mod windows_console {
     }
 
     pub fn ensure() -> bool {
-        if let Some(&ready) = READY.get() {
-            let _ = ready;
+        if READY.get().is_some() {
             return *OWNED.get().unwrap_or(&false);
         }
         let owned = unsafe { wire() };
@@ -155,11 +156,6 @@ pub fn field_line(label: &str, value: &str) {
     println!("{}  {value}", paint(Color::Yellow, label));
 }
 
-pub fn field_label(label: &str) {
-    let _guard = CONSOLE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-    println!("{}", paint(Color::Yellow, label));
-}
-
 pub fn plain_line(label: &str, value: &str) {
     let _guard = CONSOLE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
     println!("{label}  {value}");
@@ -173,6 +169,12 @@ pub fn plain_label(label: &str) {
 pub fn error(text: &str) {
     let _guard = CONSOLE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
     println!("  {}", paint(Color::Red, text));
+}
+
+/// Tag for files that went through GamekitData conversion. Painted only on
+/// interactive terminals; plain text otherwise.
+pub fn gamekit_tag() -> String {
+    paint(Color::LightBlue, "[GamekitData]")
 }
 
 pub fn step_result(index: usize, total: usize, label: &str, is_ok: bool, reason: Option<&str>) {
@@ -252,4 +254,14 @@ pub fn press_any_key(message: &str) {
         _getch();
     }
     println!();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gamekit_tag_is_plain_without_a_terminal() {
+        assert_eq!(gamekit_tag(), "[GamekitData]");
+    }
 }

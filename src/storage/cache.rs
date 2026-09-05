@@ -1,10 +1,5 @@
-//! File-backed cache for RSA profiles.
-//!
-//! Key = SHA1(len + head 512K + tail 512K of `clmods.dll`)
-//!       fallback: client exe or sorted `system` dir listing.
-//! Value = (N_LE hex, D_LE hex) captured via live proxy.
-//! On next run we try cached profile before injecting; poisoned cache is
-//! invalidated and retried live.
+//! File-backed RSA profiles: keyed by SHA1 of clmods.dll (head+tail),
+//! tried before live capture; poisoned entries are invalidated and retried.
 
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
@@ -13,6 +8,7 @@ use obfstr::obfstr;
 
 use crate::crypto::hex::{hex_to_bytes, to_hex};
 use crate::format::aac;
+use crate::storage::read_prefix;
 use sha1::{Digest, Sha1};
 
 fn hash_file(path: &Path) -> Option<String> {
@@ -24,16 +20,8 @@ fn hash_file(path: &Path) -> Option<String> {
     let mut hasher = Sha1::new();
     hasher.update(len.to_le_bytes());
 
-    let mut buf = vec![0u8; 512 * 1024];
-    let mut filled = 0usize;
-    while filled < buf.len() {
-        match file.read(&mut buf[filled..]) {
-            Ok(0) => break,
-            Ok(n) => filled += n,
-            Err(_) => return None,
-        }
-    }
-    hasher.update(&buf[..filled]);
+    let head = read_prefix(path, 512 * 1024)?;
+    hasher.update(&head);
 
     if len > 1024 * 1024 {
         let tail_size = (512 * 1024).min(len as usize);

@@ -35,8 +35,13 @@ const DELETE_ATTEMPTS: usize = 40;
 const DELETE_RETRY: Duration = Duration::from_millis(50);
 const TERMINATED_BY_DECODER: u32 = 1;
 
-static PROXY_TO_CLEAN: Mutex<Option<PathBuf>> = Mutex::new(None);
+static PROXY_TO_CLEAN: Mutex<Option<PlantedProxy>> = Mutex::new(None);
 static JOB_HANDLE: AtomicUsize = AtomicUsize::new(0);
+
+struct PlantedProxy {
+    path: PathBuf,
+    backup: Option<PathBuf>,
+}
 
 unsafe extern "system" fn console_ctrl_handler(_ctrl_type: u32) -> BOOL {
     let job = JOB_HANDLE.swap(0, Ordering::SeqCst);
@@ -47,22 +52,31 @@ unsafe extern "system" fn console_ctrl_handler(_ctrl_type: u32) -> BOOL {
             TerminateJobObject(job.as_raw(), TERMINATED_BY_DECODER);
         }
     }
-    if let Some(path) = take_pending_proxy() {
-        remove_proxy(&path);
+    if let Some(planted) = take_pending_proxy() {
+        remove_proxy(&planted);
     }
     0
 }
 
-fn take_pending_proxy() -> Option<PathBuf> {
+fn take_pending_proxy() -> Option<PlantedProxy> {
     PROXY_TO_CLEAN.lock().ok()?.take()
 }
 
-fn remove_proxy(path: &Path) {
+fn remove_proxy(planted: &PlantedProxy) {
     for _ in 0..DELETE_ATTEMPTS {
-        match std::fs::remove_file(path) {
-            Ok(()) => return,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        match std::fs::remove_file(&planted.path) {
+            Ok(()) => break,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
             Err(_) => thread::sleep(DELETE_RETRY),
+        }
+    }
+    if let Some(backup) = &planted.backup {
+        for _ in 0..DELETE_ATTEMPTS {
+            match std::fs::rename(backup, &planted.path) {
+                Ok(()) => return,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+                Err(_) => thread::sleep(DELETE_RETRY),
+            }
         }
     }
 }
@@ -94,16 +108,16 @@ pub fn capture_key(
     }
     runtime::pre_capture_gate()?;
     noise::stir(0xC4A7_0011);
-    let dll_path = write_proxy(system_dir, candidates, dll_bytes)?;
+    let planted = write_proxy(system_dir, candidates, dll_bytes)?;
     if let Ok(mut guard) = PROXY_TO_CLEAN.lock() {
-        *guard = Some(dll_path);
+        *guard = Some(planted);
     }
     unsafe {
         SetConsoleCtrlHandler(Some(console_ctrl_handler), 1);
     }
     let result = capture(&client, system_dir, timeout, on_wait);
-    if let Some(path) = take_pending_proxy() {
-        remove_proxy(&path);
+    if let Some(planted) = take_pending_proxy() {
+        remove_proxy(&planted);
     }
     unsafe {
         SetConsoleCtrlHandler(Some(console_ctrl_handler), 0);
@@ -111,7 +125,7 @@ pub fn capture_key(
     result
 }
 
-fn write_proxy(system_dir: &Path, candidates: &[String], bytes: &[u8]) -> Result<PathBuf> {
+fn write_proxy(system_dir: &Path, candidates: &[String], bytes: &[u8]) -> Result<PlantedProxy> {
     use std::io::Write as _;
     for name in candidates {
         let path = system_dir.join(name);
@@ -121,17 +135,39 @@ fn write_proxy(system_dir: &Path, candidates: &[String], bytes: &[u8]) -> Result
             Err(source) => return Err(Error::io(IoAction::Write, &path, source)),
         };
         file.write_all(bytes).map_err(|source| Error::io(IoAction::Write, &path, source))?;
-        return Ok(path);
+        return Ok(PlantedProxy { path, backup: None });
     }
-    Err(Error::ProxyNamesTaken)
+    replace_first_candidate(system_dir, candidates, bytes)
 }
 
-fn capture(
-    client: &Path,
-    cwd: &Path,
-    timeout: Duration,
-    on_wait: &mut dyn FnMut(),
-) -> Result<aac::RsaProfile> {
+fn replace_first_candidate(
+    system_dir: &Path,
+    candidates: &[String],
+    bytes: &[u8],
+) -> Result<PlantedProxy> {
+    use std::io::Write as _;
+    let Some(first) = candidates.first() else {
+        return Err(Error::ProxyNamesTaken);
+    };
+    let path = system_dir.join(first);
+    let backup = system_dir.join(format!("_{first}"));
+    if backup.exists() {
+        return Err(Error::ProxyNamesTaken);
+    }
+    std::fs::rename(&path, &backup).map_err(|source| Error::io(IoAction::Write, &path, source))?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|source| Error::io(IoAction::Write, &path, source))?;
+    if let Err(source) = file.write_all(bytes) {
+        let _ = std::fs::rename(&backup, &path);
+        return Err(Error::io(IoAction::Write, &path, source));
+    }
+    Ok(PlantedProxy { path, backup: Some(backup) })
+}
+
+fn open_capture_pipe() -> Result<(OwnedHandle, Vec<u16>)> {
     let pipe_name = strings::pipe_name(std::process::id(), now_millis());
     let wide_pipe = to_wide(&pipe_name);
     let pipe_raw = unsafe {
@@ -147,28 +183,10 @@ fn capture(
         )
     };
     let pipe = OwnedHandle::from_raw(pipe_raw).ok_or(Error::PipeCreate)?;
-    let env_var = strings::pipe_env();
-    let env_name = to_wide(&env_var);
-    unsafe {
-        SetEnvironmentVariableW(env_name.as_ptr(), wide_pipe.as_ptr());
-    }
-    let job_raw = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
-    let job = OwnedHandle::from_raw(job_raw);
-    let job_handle = job.as_ref().map(OwnedHandle::as_raw).unwrap_or(std::ptr::null_mut());
-    let (process, main_thread) = match launch_suspended(client, cwd, job_handle) {
-        Ok(pair) => pair,
-        Err(error) => {
-            unsafe {
-                SetEnvironmentVariableW(env_name.as_ptr(), std::ptr::null());
-            }
-            return Err(error);
-        }
-    };
-    unsafe {
-        SetEnvironmentVariableW(env_name.as_ptr(), std::ptr::null());
-    }
-    let job_bits = job.map(OwnedHandle::into_raw).unwrap_or(std::ptr::null_mut()) as usize;
-    JOB_HANDLE.store(job_bits, Ordering::SeqCst);
+    Ok((pipe, wide_pipe))
+}
+
+fn spawn_pipe_reader(pipe: OwnedHandle) -> mpsc::Receiver<Vec<u8>> {
     let (tx, rx) = mpsc::channel::<Vec<u8>>();
     thread::spawn(move || {
         let pipe = pipe;
@@ -200,17 +218,18 @@ fn capture(
         drop(pipe);
         let _ = tx.send(data);
     });
-    unsafe {
-        ResumeThread(main_thread.as_raw());
-    }
+    rx
+}
+
+fn await_key(
+    rx: &mpsc::Receiver<Vec<u8>>,
+    timeout: Duration,
+    on_wait: &mut dyn FnMut(),
+) -> Option<Vec<u8>> {
     let deadline = Instant::now() + timeout;
-    let mut captured: Option<Vec<u8>> = None;
     loop {
         match rx.recv_timeout(Duration::from_millis(150)) {
-            Ok(data) => {
-                captured = Some(data);
-                break;
-            }
+            Ok(data) => return Some(data),
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 on_wait();
                 if Instant::now() >= deadline {
@@ -220,12 +239,12 @@ fn capture(
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
+    rx.try_recv().ok()
+}
 
-    if captured.is_none() {
-        captured = rx.try_recv().ok();
-    }
-    let job_to_close = JOB_HANDLE.swap(0, Ordering::SeqCst);
-    let job = if job_to_close != 0 { OwnedHandle::from_raw(job_to_close as HANDLE) } else { None };
+fn terminate_client(process: &OwnedHandle, _main_thread: &OwnedHandle) {
+    let job_bits = JOB_HANDLE.swap(0, Ordering::SeqCst);
+    let job = if job_bits != 0 { OwnedHandle::from_raw(job_bits as HANDLE) } else { None };
     unsafe {
         if let Some(ref job) = job {
             TerminateJobObject(job.as_raw(), TERMINATED_BY_DECODER);
@@ -233,9 +252,42 @@ fn capture(
         TerminateProcess(process.as_raw(), TERMINATED_BY_DECODER);
         WaitForSingleObject(process.as_raw(), EXIT_WAIT_MS);
     }
-    drop(main_thread);
-    drop(process);
-    drop(job);
+}
+
+fn capture(
+    client: &Path,
+    cwd: &Path,
+    timeout: Duration,
+    on_wait: &mut dyn FnMut(),
+) -> Result<aac::RsaProfile> {
+    let (pipe, wide_pipe) = open_capture_pipe()?;
+    let env_name = to_wide(&strings::pipe_env());
+    unsafe {
+        SetEnvironmentVariableW(env_name.as_ptr(), wide_pipe.as_ptr());
+    }
+    let job_raw = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+    let job = OwnedHandle::from_raw(job_raw);
+    let job_handle = job.as_ref().map(OwnedHandle::as_raw).unwrap_or(std::ptr::null_mut());
+    let (process, main_thread) = match launch_suspended(client, cwd, job_handle) {
+        Ok(pair) => pair,
+        Err(error) => {
+            unsafe {
+                SetEnvironmentVariableW(env_name.as_ptr(), std::ptr::null());
+            }
+            return Err(error);
+        }
+    };
+    unsafe {
+        SetEnvironmentVariableW(env_name.as_ptr(), std::ptr::null());
+    }
+    let job_bits = job.map(OwnedHandle::into_raw).unwrap_or(std::ptr::null_mut()) as usize;
+    JOB_HANDLE.store(job_bits, Ordering::SeqCst);
+    let rx = spawn_pipe_reader(pipe);
+    unsafe {
+        ResumeThread(main_thread.as_raw());
+    }
+    let captured = await_key(&rx, timeout, on_wait);
+    terminate_client(&process, &main_thread);
     let data = captured.filter(|bytes| !bytes.is_empty()).ok_or(Error::CaptureTimeout)?;
     noise::stir((data.len() as u32) ^ 0xAADE_C0DE);
     let text = String::from_utf8_lossy(&data);
@@ -281,4 +333,54 @@ fn launch_suspended(client: &Path, cwd: &Path, job: HANDLE) -> Result<(OwnedHand
         }
     }
     Ok((process, main_thread))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "aa-proxy-{}-{}-{}",
+            std::process::id(),
+            now_millis(),
+            tag
+        ));
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        dir
+    }
+
+    fn candidates() -> Vec<String> {
+        vec!["ddraw.dll".to_owned(), "d3d9.dll".to_owned(), "xinput1_4.dll".to_owned()]
+    }
+
+    #[test]
+    fn plants_first_free_name() {
+        let dir = scratch_dir("free");
+        let planted = write_proxy(&dir, &candidates(), b"proxy").expect("plant");
+        assert_eq!(planted.path, dir.join("ddraw.dll"));
+        assert!(planted.backup.is_none());
+        assert_eq!(std::fs::read(&planted.path).expect("read"), b"proxy");
+        remove_proxy(&planted);
+        assert!(!planted.path.exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn replaces_first_name_with_backup_when_all_taken() {
+        let dir = scratch_dir("taken");
+        for name in candidates() {
+            std::fs::write(dir.join(&name), b"original").expect("seed");
+        }
+        let planted = write_proxy(&dir, &candidates(), b"proxy").expect("plant");
+        assert_eq!(planted.path, dir.join("ddraw.dll"));
+        let backup = planted.backup.clone().expect("backup recorded");
+        assert_eq!(backup, dir.join("_ddraw.dll"));
+        assert_eq!(std::fs::read(&planted.path).expect("read"), b"proxy");
+        assert_eq!(std::fs::read(&backup).expect("read"), b"original");
+        remove_proxy(&planted);
+        assert_eq!(std::fs::read(&planted.path).expect("read"), b"original");
+        assert!(!backup.exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

@@ -66,22 +66,6 @@ jobs:
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
 
-      - name: Build proxy DLL
-        id: proxy
-        uses: ./.github/actions/build-proxy
-
-      - name: Sign proxy DLL
-        shell: pwsh
-        run: |
-          . .\res\sign\Invoke-LazySign.ps1
-          Invoke-LazySign -Target "${{ steps.proxy.outputs.dll-path }}" -Domain "twitter.com" -Password "kyprivet999"
-
-      - name: Point the build at the proxy DLL
-        shell: pwsh
-        run: |
-          "AA_PROXY_DLL=${{ steps.proxy.outputs.dll-path }}" |
-            Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-
       - name: Build optimized binary
         env:
           AA_REQUIRE_ICON: "1"

@@ -21,12 +21,19 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: i686-pc-windows-msvc
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
       - name: Build proxy DLL
-        id: proxy
-        uses: ./.github/actions/build-proxy
+        run: cargo build --release -p aa_proxy --target i686-pc-windows-msvc
 
       - name: Upload proxy DLL
         uses: actions/upload-artifact@v7
         with:
           name: aa_proxy-dll
-          path: ${{ steps.proxy.outputs.dll-path }}
+          path: target/i686-pc-windows-msvc/release/aa_proxy.dll

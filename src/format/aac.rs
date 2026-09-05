@@ -5,7 +5,6 @@ use crate::error::{Error, Result};
 use num_bigint::BigUint;
 use obfstr::{obfbytes, obfstr};
 
-pub const MAGIC: &[u8; 20] = b"ActiveAnticheatCrypt";
 pub const RSA_BLOCK_OFFSET: usize = 0x14;
 pub const RSA_BLOCK_LEN: usize = 256;
 pub const PAYLOAD_OFFSET: usize = 0x114;
@@ -66,9 +65,9 @@ fn pkcs1_v15_type2_unpad(block: &[u8]) -> Option<&[u8]> {
 
 /// Fixed-width big-endian encoding of a decrypted value.
 ///
-/// num-bigint's `to_bytes_be` trims leading zeros, but PKCS#1 v1.5 parsing
+/// num-bigint's to_bytes_be trims leading zeros, but PKCS#1 v1.5 parsing
 /// requires the full RSA block width - without the zero padding every small
-/// plaintext would be rejected at `block[0] != 0x00`.
+/// plaintext would be rejected at block[0] != 0x00.
 /// Returns stack-allocated block to avoid per-file heap allocation.
 #[inline]
 fn fixed_be_block(value: &BigUint) -> [u8; RSA_BLOCK_LEN] {
@@ -125,6 +124,7 @@ pub fn decode_any(file_bytes: &[u8], profiles: &[RsaProfile]) -> Result<Decoded>
 #[cfg(test)]
 mod tests {
     use super::*;
+    const MAGIC: &[u8; 20] = b"ActiveAnticheatCrypt";
 
     #[test]
     fn detects_magic_from_header_only() {

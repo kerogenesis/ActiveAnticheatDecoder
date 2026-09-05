@@ -15,7 +15,7 @@ use crate::system::term;
 
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// The C++ proxy DLL, embedded at build time (see build.rs).
+/// The proxy DLL, embedded at build time (see build.rs).
 const PROXY_DLL: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/aa_proxy.dll"));
 
 #[derive(Default)]
@@ -73,6 +73,53 @@ fn report_outcome(outcome: &Outcome, output_root: &Path) {
     if !outcome.clean_paths.is_empty() {
         term::plain_line(obfstr!("Clean files:"), &output_root.display().to_string());
     }
+}
+
+/// Parallel decode of every found container with one profile.
+fn decode_all(
+    files: &[scan::Found],
+    profile: &aac::RsaProfile,
+    root: &Path,
+    output_root: &Path,
+    auto_decode_gamekit: bool,
+) -> Outcome {
+    let completed_counter = AtomicUsize::new(0);
+    let outcome_mutex = Mutex::new(Outcome::default());
+    files.par_iter().for_each(|found| {
+        let source = &found.path;
+        let target_rel = output::relative(source, root);
+        let decoded = fs::read(source)
+            .map_err(|source_err| Error::io(IoAction::Read, source, source_err))
+            .and_then(|bytes| {
+                fmt_decode::decode_aac_file(
+                    source,
+                    &bytes,
+                    std::slice::from_ref(profile),
+                    root,
+                    output_root,
+                    auto_decode_gamekit,
+                )
+            });
+        let current_step = completed_counter.fetch_add(1, Ordering::Relaxed) + 1;
+        let (is_ok, label, err_str) = match &decoded {
+            Ok((_, gamekit)) => {
+                let label = if *gamekit {
+                    format!("{} {target_rel}", term::gamekit_tag())
+                } else {
+                    target_rel.clone()
+                };
+                (true, label, None)
+            }
+            Err(error) => (false, target_rel.clone(), Some(error.to_string())),
+        };
+        term::step_result(current_step, files.len(), &label, is_ok, err_str.as_deref());
+        let mut outcome_guard = outcome_mutex.lock().unwrap_or_else(|e| e.into_inner());
+        match decoded {
+            Ok((destination, _)) => outcome_guard.clean_paths.push(destination),
+            Err(error) => outcome_guard.failures.push((source.to_path_buf(), error)),
+        }
+    });
+    outcome_mutex.into_inner().unwrap_or_else(|e| e.into_inner())
 }
 
 fn is_cache_poisoned(outcome: &Outcome, source: AcquireSource) -> bool {
@@ -151,47 +198,8 @@ pub fn run_scan(picked: &Path, interactive: bool) {
 
     let output_root = output::output_root();
 
-    // Helper to run parallel decode with a given profile.
-    let do_decode = |profile: &aac::RsaProfile| -> Outcome {
-        let completed_counter = AtomicUsize::new(0);
-        let outcome_mutex = Mutex::new(Outcome::default());
-        result.aac.par_iter().for_each(|found| {
-            let source = &found.path;
-            let target_rel = output::relative(source, root);
-            let decoded = fs::read(source)
-                .map_err(|source_err| Error::io(IoAction::Read, source, source_err))
-                .and_then(|bytes| {
-                    fmt_decode::decode_aac_file(
-                        source,
-                        &bytes,
-                        std::slice::from_ref(profile),
-                        root,
-                        &output_root,
-                        auto_decode_gamekit,
-                    )
-                });
-            let current_step = completed_counter.fetch_add(1, Ordering::SeqCst) + 1;
-            let is_ok = decoded.is_ok();
-            let err_str = decoded.as_ref().err().map(|e| e.to_string());
-            term::step_result(
-                current_step,
-                result.aac.len(),
-                &target_rel,
-                is_ok,
-                err_str.as_deref(),
-            );
-            let mut outcome_guard = outcome_mutex.lock().unwrap_or_else(|e| e.into_inner());
-            match decoded {
-                Ok(destination) => outcome_guard.clean_paths.push(destination),
-                Err(error) => outcome_guard.failures.push((source.to_path_buf(), error)),
-            }
-        });
-        outcome_mutex.into_inner().unwrap_or_else(|e| e.into_inner())
-    };
-
-    println!();
-    term::plain_label(obfstr!("Decoding:"));
-    let mut outcome = do_decode(&acquired.profile);
+    let mut outcome =
+        decode_all(&result.aac, &acquired.profile, root, &output_root, auto_decode_gamekit);
 
     if is_cache_poisoned(&outcome, acquired.source) {
         term::error(obfstr!("Cached key failed for all files — retrying live capture..."));
@@ -210,7 +218,8 @@ pub fn run_scan(picked: &Path, interactive: bool) {
             acquired = live;
             println!();
             term::plain_label(obfstr!("Retrying decoding with live key:"));
-            outcome = do_decode(&acquired.profile);
+            outcome =
+                decode_all(&result.aac, &acquired.profile, root, &output_root, auto_decode_gamekit);
         }
     }
 

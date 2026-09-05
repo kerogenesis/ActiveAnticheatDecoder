@@ -3,6 +3,13 @@
 version = 4
 
 [[package]]
+name = "aa_proxy"
+version = "1.0.0"
+dependencies = [
+ "windows-sys",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -75,7 +82,7 @@ dependencies = [
 
 [[package]]
 name = "decoder"
-version = "1.6.0"
+version = "1.7.0"
 dependencies = [
  "camino",
  "num-bigint",
@@ -213,9 +220,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "3.0.4"
+version = "3.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6275cddf4610d1775e6d1fe9469b2e77d0f39fd98fb7450901b821e0c53649f"
+checksum = "12df2e0110f65b775f769bb17ef989067a1d931b2eb822bd4346631eeada89f9"
 dependencies = [
  "proc-macro2",
  "quote",

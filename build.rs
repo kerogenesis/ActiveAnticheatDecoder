@@ -1,30 +1,20 @@
-//! Embed the C++ proxy DLL and the application icon into the executable.
-//! The proxy is built separately with MSVC in CI, which points us at the
-//! result through `AA_PROXY_DLL`; we copy those bytes into `OUT_DIR` so
-//! `main.rs` can `include_bytes!` them. When the variable is unset -- a plain
-//! local build without the C++ toolchain -- an empty placeholder is embedded so
-//! the binary still links; it simply reports that no proxy was embedded if key
-//! capture is attempted.
+//! Embed the proxy DLL and the app icon.
 //!
-//! The icon is compiled with `rc.exe`, which ships with the Windows SDK and is
-//! only on PATH inside a Developer Command Prompt. Relying on PATH silently
-//! lost the icon in CI: the proxy action calls `vcvars32.bat` inside its own
-//! step, those variables never reach the later `cargo build` step, and `rustc`
-//! finds `link.exe` through its own lookup, so the build kept linking without
-//! the resource. We therefore look `rc.exe` up ourselves -- `AA_RC_EXE`, then
-//! PATH, then the installed Windows Kits -- and set `AA_REQUIRE_ICON` in the
-//! release workflow so a failure there stops the build instead of printing a
-//! warning nobody reads. Without that variable a missing icon or `rc.exe` is
-//! still skipped, which keeps check-only jobs and bare local builds working.
+//! AA_PROXY_DLL overrides the embedded DLL with a hand-built one;
+//! non-Windows/non-x86 hosts embed an empty placeholder instead.
+//! `rc.exe` (Windows SDK) is looked up explicitly because it is only on PATH
+//! inside a Developer Prompt; `AA_REQUIRE_ICON=1` turns a missing icon into
+//! a hard error for release builds.
 
 use std::env;
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 fn main() {
-    println!("cargo:rerun-if-changed=proxy/aa_proxy.cpp");
-    println!("cargo:rerun-if-changed=proxy/vendor/UltimateProxyDLL.h");
+    println!("cargo:rerun-if-changed=src/proxy");
+    println!("cargo:rerun-if-env-changed=AA_PROXY_DLL");
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR is always set by cargo"));
     stage_proxy_dll(&out_dir);
     #[cfg(windows)]
@@ -33,20 +23,77 @@ fn main() {
 
 fn stage_proxy_dll(out_dir: &Path) {
     let destination = out_dir.join("aa_proxy.dll");
-    println!("cargo:rerun-if-env-changed=AA_PROXY_DLL");
-    match env::var_os("AA_PROXY_DLL") {
+    let bytes = match env::var_os("AA_PROXY_DLL") {
         Some(path) => {
             let path = PathBuf::from(path);
             println!("cargo:rerun-if-changed={}", path.display());
-            let bytes = fs::read(&path).unwrap_or_else(|error| {
+            fs::read(&path).unwrap_or_else(|error| {
                 panic!("cannot read AA_PROXY_DLL at {path}: {error}", path = path.display())
-            });
-            fs::write(&destination, bytes).expect("cannot stage the embedded proxy DLL");
+            })
         }
-        None => {
-            fs::write(&destination, []).expect("cannot stage the empty proxy placeholder");
+        None => compile_proxy_dll(),
+    };
+    fs::write(&destination, bytes).expect("cannot stage the embedded proxy DLL");
+}
+
+/// Build the proxy member in-process and return its bytes. A nested cargo
+/// must not see the outer build's `CARGO_*` variables, so they are scrubbed
+/// (a few unrelated ones are kept). It also gets its own target dir: sharing
+/// the workspace one would deadlock on cargo's build lock, and this keeps
+/// the DLL path predictable.
+fn compile_proxy_dll() -> Vec<u8> {
+    let manifest_dir =
+        PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by cargo"));
+    let target: String = env::var("TARGET").expect("TARGET is set by cargo");
+    // The proxy is x86 machine code; anything else (and any non-Windows
+    // host) gets an empty placeholder instead of a failed build. Live
+    // capture then reports ProxyDllMissing.
+    let arch = target.split('-').next().unwrap_or("");
+    if !cfg!(windows) || arch != "i686" {
+        println!(
+            "cargo:warning=proxy DLL is x86-only, embedding an empty placeholder for {target}"
+        );
+        return Vec::new();
+    }
+    let profile = env::var("PROFILE").expect("PROFILE is set by cargo");
+    let profile_dir = if profile == "release" { "release" } else { "debug" };
+    let dll = manifest_dir
+        .join("target")
+        .join("proxy")
+        .join(&target)
+        .join(profile_dir)
+        .join("aa_proxy.dll");
+
+    let cargo = env!("CARGO");
+    let mut child = Command::new(cargo);
+    child
+        .args(["build", "-p", "aa_proxy", "--target", &target])
+        .current_dir(&manifest_dir)
+        .env("CARGO_TARGET_DIR", manifest_dir.join("target").join("proxy"))
+        .env_remove("TARGET")
+        .env_remove("PROFILE")
+        .env_remove("OUT_DIR")
+        .env_remove("HOST");
+    if profile == "release" {
+        child.arg("--release");
+    }
+    for (key, _) in env::vars() {
+        if key.starts_with("CARGO_")
+            && !matches!(key.as_str(), "CARGO_HOME" | _ if key.starts_with("CARGO_NET_") || key.starts_with("CARGO_REGISTRIES_"))
+        {
+            child.env_remove(OsString::from(key));
         }
     }
+    let output = child.output().expect("cannot spawn cargo for the proxy DLL");
+    assert!(
+        output.status.success(),
+        "proxy build failed:\n--- stdout ---\n{}\n--- stderr ---\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    println!("cargo:rerun-if-changed={}", dll.display());
+    fs::read(&dll)
+        .unwrap_or_else(|error| panic!("proxy built but {} is missing: {error}", dll.display()))
 }
 
 #[cfg(windows)]

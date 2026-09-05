@@ -64,9 +64,9 @@ fn main() {
             term::error(&format!("{} {}", obfstr!("not a client folder:"), directory.display()));
             continue;
         };
-        // Windows paths are case-insensitive: `C:\Client` and `c:\client\`
-        // are the same folder, so normalize before dedup to avoid scanning
-        // (and capturing the key for) one client twice.
+        // Windows paths are case-insensitive,
+        // so normalize before dedup to avoid scanning
+        // and capturing the key for one client twice.
         let key = normalize_root_key(layout.root.as_str());
         if seen_roots.insert(key) {
             run::run_scan(layout.root.as_std_path(), true);

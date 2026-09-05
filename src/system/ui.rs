@@ -1,9 +1,9 @@
 //! Native "browse for folder" dialog, for the double-click case.
 //!
-//! The modern `IFileOpenDialog` (no `MAX_PATH` cap) is tried first; any
-//! technical failure falls back to the legacy `SHBrowseForFolderW` dialog.
-//! `windows-sys` ships no COM interfaces, so the modern dialog is driven
-//! through its raw vtable (`windows` crate would need network to fetch).
+//! The modern IFileOpenDialog (no MAX_PATH cap) is tried first; any
+//! technical failure falls back to the legacy SHBrowseForFolderW dialog.
+//! windows-sys ships no COM interfaces, so the modern dialog is driven
+//! through its raw vtable.
 
 use obfstr::obfstr;
 use std::path::PathBuf;
@@ -124,7 +124,6 @@ mod modern_dialog {
             return failed(dialog);
         }
 
-        // Cosmetic: a missing title must not fail the whole dialog.
         let wide_title = to_wide(title);
         let set_title: unsafe extern "system" fn(*mut c_void, PCWSTR) -> HRESULT =
             unsafe { std::mem::transmute(vtable_entry(dialog, VT_SET_TITLE)) };

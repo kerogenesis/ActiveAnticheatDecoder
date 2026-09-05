@@ -1,17 +1,20 @@
-//! Hash manifest `ft_*` path: static-key RC4 over a binary manifest.
+//! Hash manifest ft_* path: static-key RC4 over a binary manifest.
 
 use crate::crypto::{hex::to_hex, rc4, sha1};
 use crate::error::{Error, Result};
 use obfstr::obfstr;
 use std::fmt::Write as _;
+use std::sync::OnceLock;
 
 pub const HASH_MANIFEST_KEY_SEED: [u8; 24] = [
     0x91, 0x12, 0x24, 0xf2, 0xe9, 0xe2, 0x91, 0x12, 0x24, 0xf2, 0xf8, 0xe2, 0x91, 0x12, 0x24, 0xf2,
     0xe9, 0xe2, 0x91, 0x12, 0x24, 0xf2, 0xe9, 0xe2,
 ];
 
+static KEY: OnceLock<[u8; 20]> = OnceLock::new();
+
 pub fn hash_manifest_key() -> [u8; 20] {
-    sha1::digest(&HASH_MANIFEST_KEY_SEED)
+    *KEY.get_or_init(|| sha1::digest(&HASH_MANIFEST_KEY_SEED))
 }
 
 pub fn is_hash_manifest_name(file_name: &str) -> bool {
@@ -50,11 +53,9 @@ impl<'a> Cursor<'a> {
     }
 
     fn take(&mut self, count: usize, what: &'static str) -> Result<&'a [u8]> {
-        if self.remaining() < count {
-            return Err(Error::ManifestEof { what });
-        }
-        let slice = &self.data[self.offset..self.offset + count];
-        self.offset += count;
+        let end = self.offset.checked_add(count).ok_or(Error::ManifestEof { what })?;
+        let slice = self.data.get(self.offset..end).ok_or(Error::ManifestEof { what })?;
+        self.offset = end;
         Ok(slice)
     }
 

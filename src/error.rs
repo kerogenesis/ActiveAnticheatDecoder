@@ -104,9 +104,6 @@ pub enum Error {
 
     #[error("not an ActiveAnticheatCrypt container")]
     DroppedUnknownFormat,
-
-    #[error("GamekitData payload decoding failed")]
-    GamekitDecodeFailed,
 }
 
 impl Error {
