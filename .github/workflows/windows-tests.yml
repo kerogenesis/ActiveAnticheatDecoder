@@ -52,7 +52,7 @@ jobs:
 
   deny:
     name: Supply chain
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
