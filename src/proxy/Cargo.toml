@@ -1,6 +1,6 @@
 [package]
 name = "aa_proxy"
-version = "1.0.0"
+version = "1.7.0"
 edition = "2024"
 description = "Universal proxy DLL. Forwards every export to the real system DLL and captures the live ActiveAnticheatCrypt RSA key"
 license = "MIT"

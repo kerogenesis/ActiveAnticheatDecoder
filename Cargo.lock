@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "aa_proxy"
-version = "1.0.0"
+version = "1.7.0"
 dependencies = [
  "windows-sys",
 ]
@@ -82,7 +82,7 @@ dependencies = [
 
 [[package]]
 name = "decoder"
-version = "1.6.0"
+version = "1.7.0"
 dependencies = [
  "camino",
  "num-bigint",
