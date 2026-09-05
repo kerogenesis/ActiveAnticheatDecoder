@@ -19,7 +19,8 @@ pub fn hash_manifest_key() -> [u8; 20] {
 
 pub fn is_hash_manifest_name(file_name: &str) -> bool {
     let prefix = obfstr!("ft_").to_owned();
-    file_name.len() >= prefix.len() && file_name[..prefix.len()].eq_ignore_ascii_case(&prefix)
+    // get(), not slicing: byte 3 can split a multibyte char ("a€x.dat").
+    file_name.get(..prefix.len()).is_some_and(|head| head.eq_ignore_ascii_case(&prefix))
 }
 
 #[derive(Debug, Clone)]
@@ -122,7 +123,7 @@ pub fn format_manifest(manifest: &Manifest) -> String {
     text
 }
 
-pub fn decode(file_bytes: &[u8]) -> Result<String> {
+pub fn decode_manifest(file_bytes: &[u8]) -> Result<String> {
     let plain = rc4::crypt(file_bytes, &hash_manifest_key());
     let manifest = parse(&plain)?;
     Ok(format_manifest(&manifest))
@@ -151,6 +152,13 @@ mod tests {
         assert!(!is_hash_manifest_name("ft"));
     }
 
+    #[test]
+    fn unicode_names_do_not_panic() {
+        assert!(!is_hash_manifest_name("a€x.dat"));
+        assert!(!is_hash_manifest_name("€ft_1.dat"));
+        assert!(is_hash_manifest_name("ft_1223859.dat"));
+    }
+
     fn build_manifest() -> Vec<u8> {
         let mut data = Vec::new();
         data.extend_from_slice(&1u32.to_le_bytes());
@@ -177,7 +185,7 @@ mod tests {
     #[test]
     fn round_trips_through_rc4() {
         let encrypted = rc4::crypt(&build_manifest(), &hash_manifest_key());
-        let text = decode(&encrypted).unwrap();
+        let text = decode_manifest(&encrypted).unwrap();
         assert!(text.contains("system/l2.exe"));
     }
 

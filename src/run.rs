@@ -126,10 +126,7 @@ fn is_cache_poisoned(outcome: &Outcome, source: AcquireSource) -> bool {
     source == AcquireSource::Cache
         && outcome.clean_paths.is_empty()
         && !outcome.failures.is_empty()
-        && outcome
-            .failures
-            .iter()
-            .all(|(_, e)| matches!(e, Error::Pkcs1PaddingInvalid | Error::DecodeFailed { .. }))
+        && outcome.failures.iter().all(|(_, e)| matches!(e, Error::DecodeFailed { .. }))
 }
 
 pub fn finish(interactive: bool) {
@@ -188,7 +185,8 @@ pub fn run_scan(picked: &Path, interactive: bool) {
         term::error(&format!("{} {error}", obfstr!("scan walk error:")));
     }
 
-    let status = format!("scanned tree ({} targets found)", result.aac.len());
+    let status =
+        format!("scanned {} files ({} targets found)", result.files_examined, result.aac.len());
     term::field_line(obfstr!("+ Status:"), &status);
 
     if result.aac.is_empty() {
@@ -257,7 +255,7 @@ pub fn run_dropped_files(paths: &[PathBuf]) {
 
         let decoded = decode_dropped_file(path, &name, &output_root);
 
-        let current_step = completed_counter.fetch_add(1, Ordering::SeqCst) + 1;
+        let current_step = completed_counter.fetch_add(1, Ordering::Relaxed) + 1;
         let is_ok = decoded.is_ok();
         let err_str = decoded.as_ref().err().map(|e| e.to_string());
 
@@ -285,7 +283,7 @@ pub fn run_hash_manifest_files(paths: &[PathBuf]) {
 
         let decoded = fs::read(path)
             .map_err(|source| Error::io(IoAction::Read, path, source))
-            .and_then(|bytes| manifest::decode(&bytes))
+            .and_then(|bytes| manifest::decode_manifest(&bytes))
             .and_then(|text| output::write_output(&destination, text.as_bytes()));
 
         if let Err(error) = decoded {

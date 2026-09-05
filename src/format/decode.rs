@@ -1,5 +1,4 @@
-//! High-level decode helpers used by run.rs.
-//! Extracted from orchestrator — run decides what to do, format::decode decides how.
+//! High-level decode helpers: run.rs decides what, this decides how.
 
 use std::path::{Path, PathBuf};
 
@@ -37,7 +36,7 @@ pub fn decode_hash_manifest_file(
     root: &Path,
     output_root: &Path,
 ) -> Result<PathBuf> {
-    let text = manifest::decode(bytes)?;
+    let text = manifest::decode_manifest(bytes)?;
     let destination = output::output_path_for(root, path, output_root, obfstr!("_clean.txt"));
     output::write_output(&destination, text.as_bytes())?;
     Ok(destination)

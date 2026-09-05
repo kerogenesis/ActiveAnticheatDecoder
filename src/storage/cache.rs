@@ -8,7 +8,6 @@ use obfstr::obfstr;
 
 use crate::crypto::hex::{hex_to_bytes, to_hex};
 use crate::format::aac;
-use crate::storage::read_prefix;
 use sha1::{Digest, Sha1};
 
 fn hash_file(path: &Path) -> Option<String> {
@@ -20,8 +19,15 @@ fn hash_file(path: &Path) -> Option<String> {
     let mut hasher = Sha1::new();
     hasher.update(len.to_le_bytes());
 
-    let head = read_prefix(path, 512 * 1024)?;
-    hasher.update(&head);
+    let mut head = vec![0u8; 512 * 1024];
+    let mut filled = 0usize;
+    while filled < head.len() {
+        match file.read(&mut head[filled..]) {
+            Ok(0) | Err(_) => break,
+            Ok(m) => filled += m,
+        }
+    }
+    hasher.update(&head[..filled]);
 
     if len > 1024 * 1024 {
         let tail_size = (512 * 1024).min(len as usize);
@@ -114,14 +120,8 @@ pub fn save_cached_profile(system_dir: &Path, client_exe: &str, profile: &aac::R
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let n_le_hex =
-        profile.modulus.to_bytes_le().iter().map(|b| format!("{b:02x}")).collect::<String>();
-    let d_le_hex = profile
-        .private_exponent
-        .to_bytes_le()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect::<String>();
+    let n_le_hex = to_hex(&profile.modulus.to_bytes_le());
+    let d_le_hex = to_hex(&profile.private_exponent.to_bytes_le());
     let content = format!("{n_le_hex}\n{d_le_hex}\n");
     let _ = std::fs::write(&path, content.as_bytes());
 }

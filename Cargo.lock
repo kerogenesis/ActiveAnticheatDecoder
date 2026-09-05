@@ -82,7 +82,7 @@ dependencies = [
 
 [[package]]
 name = "decoder"
-version = "1.7.0"
+version = "1.6.0"
 dependencies = [
  "camino",
  "num-bigint",

@@ -37,9 +37,18 @@ pub fn detect_format(data: &[u8]) -> Option<FormatType> {
 }
 
 /// Patch a GamekitData header into its Lineage2Ver shape in place.
-/// Returns whether the buffer held a recognised header.
 pub fn patch_to_lineage2(data: &mut [u8]) -> bool {
-    if detect_format(data).is_none() {
+    if !matches!(
+        detect_format(data),
+        Some(
+            FormatType::Ver111
+                | FormatType::Ver120
+                | FormatType::Ver121
+                | FormatType::Ver211
+                | FormatType::Ver212
+                | FormatType::Ver413
+        )
+    ) {
         return false;
     }
     data[..GAMEKIT_HEADER.len()].copy_from_slice(LINEAGE2_HEADER);
@@ -75,5 +84,15 @@ mod tests {
         let mut data = vec![0u8; 40];
         assert!(!patch_to_lineage2(&mut data));
         assert_eq!(data, vec![0u8; 40]);
+    }
+
+    #[test]
+    fn leaves_ogg_audio_untouched() {
+        let mut data = Vec::new();
+        data.extend_from_slice(b"OggSL2SDBM");
+        data.extend_from_slice(&[0u8; 20]);
+        assert_eq!(detect_format(&data), Some(FormatType::OggSL2SDBM));
+        assert!(!patch_to_lineage2(&mut data));
+        assert!(data.starts_with(b"OggSL2SDBM"));
     }
 }

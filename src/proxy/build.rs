@@ -13,6 +13,7 @@ use std::path::PathBuf;
 const NAMED_SLOTS: u16 = 23;
 const MAX_ORDINAL: u16 = 109;
 
+// The same three names live in proxy.rs SHARED; change both.
 const SHARED: &[&str] = &["DllCanUnloadNow", "DllGetClassObject", "SetAppCompatStringPointer"];
 
 const DDRAW_BASE: u16 = 1;

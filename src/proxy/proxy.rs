@@ -116,17 +116,18 @@ mod pool {
 
 const SHARED: [&str; 3] = ["DllCanUnloadNow", "DllGetClassObject", "SetAppCompatStringPointer"];
 
-/// x86 spin-wait thunk
+/// x86 spin-wait thunk: read-only flag check, patched jump, pause loop.
 fn thunk_template() -> [u8; 26] {
     [
-        0xb8, 0, 0, 0, 0, // mov eax, flag
-        0x38, 0x00, // cmp [eax], al
-        0x74, 0x05, // je spin
-        0xe9, 0, 0, 0, 0, // jmp target
-        0xf3, 0x90, // pause
-        0xf0, 0x00, 0x00, // lock add [eax], al
-        0x74, 0xf9, // je spin
-        0xe9, 0xef, 0xff, 0xff, 0xff, // jmp back to the jmp
+        0xB8, 0, 0, 0, 0, // mov eax, flag
+        0x80, 0x38, 0x00, // cmp byte [eax], 0
+        0x75, 0x0C, // jne ready (+12 -> 22)
+        0xE9, 0, 0, 0, 0, // jmp target (patched)
+        0xF3, 0x90, // pause
+        0x80, 0x38, 0x00, // cmp byte [eax], 0
+        0x74, 0xF9, // je spin (-7 -> 15)
+        0xEB, 0xF2, // jmp dispatch (-14 -> 10)
+        0x90, 0x90, // pad
     ]
 }
 
@@ -185,10 +186,10 @@ unsafe fn hook_stub(stub: usize, thunk: usize) {
 /// # Safety
 /// thunk must be a thunk allocated by [pool::alloc] (26 bytes).
 unsafe fn set_thunk_target(thunk: usize, target: usize) {
-    // E9 sits at thunk+9; next-ip is thunk+14.
-    let rel = target.wrapping_sub(thunk + 14) as i32;
+    // E9 sits at thunk+10; next-ip is thunk+15.
+    let rel = target.wrapping_sub(thunk + 15) as i32;
     unsafe {
-        write_bytes(thunk + 10, &rel.to_le_bytes());
+        write_bytes(thunk + 11, &rel.to_le_bytes());
     }
 }
 
@@ -400,11 +401,6 @@ fn shared_slot(name: &str) -> Option<usize> {
     SHARED.iter().position(|shared| *shared == name)
 }
 
-/// Parse the original DLL and hook every stub.
-/// Returns the wide original path for the worker thread.
-///
-/// # Safety
-/// Call once, from DLL_PROCESS_ATTACH, before any other thread exists.
 /// Hook one thunk per export and collect the bindings for the worker thread.
 /// Slots stay in ordinal order so they line up with the static overlay.
 ///
@@ -462,6 +458,21 @@ pub(super) unsafe fn create_proxy(module: HANDLE) -> Option<Vec<u16>> {
     let image = parse_image(bytes)?;
     let exports = image.exports()?;
 
+    #[cfg(debug_assertions)]
+    {
+        let mut stubs: Vec<usize> = FORWARD_TABLE
+            .iter()
+            .chain(FORWARD_ORDINAL_TABLE.iter())
+            .chain(FORWARD_SHARED_TABLE.iter())
+            .map(|stub| *stub as usize)
+            .collect();
+        stubs.sort_unstable();
+        assert!(
+            stubs.windows(2).all(|pair| pair[1] - pair[0] >= 5),
+            "forward stubs packed tighter than the 5-byte hook"
+        );
+    }
+
     unsafe {
         pool::set_hint(module as usize);
     }
@@ -481,6 +492,9 @@ unsafe fn retire_all(bindings: &[Binding]) {
     unsafe {
         for binding in bindings {
             retire_stub(binding.stub);
+            // Threads already spinning inside the thunk exit through the
+            // patched jump: aim it at the stub itself, now a bare ret.
+            set_thunk_target(binding.thunk, binding.stub);
         }
     }
 }
@@ -543,6 +557,18 @@ pub(super) unsafe extern "system" fn init_thread(_: *mut c_void) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::parse_image;
+
+    #[test]
+    fn thunk_layout_matches_the_patcher() {
+        let thunk = super::thunk_template();
+        let rel8 = |at: usize| (thunk[at] as i8) as isize;
+        assert_eq!(thunk.len(), 26);
+        assert_eq!(thunk[10], 0xE9, "dispatch E9 must sit at +10");
+        assert_eq!(8isize + 2 + rel8(9), 22, "jne must land on the back-jump");
+        assert_eq!(10 + 5, 15, "unpatched dispatch falls into the pause loop");
+        assert_eq!(20isize + 2 + rel8(21), 15, "je must loop back to pause");
+        assert_eq!(22isize + 2 + rel8(23), 10, "back-jump must land on the dispatch");
+    }
 
     /// The DLL under test. cargo test emits no cdylib artifact itself, so
     /// look next to the test binary (direct -p aa_proxy build) and in the

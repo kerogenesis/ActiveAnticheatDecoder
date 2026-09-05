@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::time::Duration;
 
+use crate::error::Result;
 use crate::format::aac::RsaProfile;
 use crate::storage::cache;
 
@@ -22,7 +23,7 @@ pub fn acquire_profile(
     candidates: &[String],
     proxy_dll: &[u8],
     timeout: Duration,
-) -> Result<Acquired, crate::error::Error> {
+) -> Result<Acquired> {
     if let Some(cached) = cache::load_cached_profile(system_dir, client_exe) {
         return Ok(Acquired { profile: cached, source: AcquireSource::Cache });
     }

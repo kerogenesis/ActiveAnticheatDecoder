@@ -63,12 +63,25 @@ fn take_pending_proxy() -> Option<PlantedProxy> {
 }
 
 fn remove_proxy(planted: &PlantedProxy) {
+    let mut removed = false;
     for _ in 0..DELETE_ATTEMPTS {
         match std::fs::remove_file(&planted.path) {
-            Ok(()) => break,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Ok(()) => {
+                removed = true;
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                removed = true;
+                break;
+            }
             Err(_) => thread::sleep(DELETE_RETRY),
         }
+    }
+    if !removed {
+        eprintln!(
+            "warn: could not remove the planted proxy {}; delete it by hand",
+            planted.path.display()
+        );
     }
     if let Some(backup) = &planted.backup {
         for _ in 0..DELETE_ATTEMPTS {
@@ -78,6 +91,11 @@ fn remove_proxy(planted: &PlantedProxy) {
                 Err(_) => thread::sleep(DELETE_RETRY),
             }
         }
+        eprintln!(
+            "warn: could not restore {} from {}; restore it by hand",
+            planted.path.display(),
+            backup.display()
+        );
     }
 }
 
@@ -152,6 +170,13 @@ fn replace_first_candidate(
     let path = system_dir.join(first);
     let backup = system_dir.join(format!("_{first}"));
     if backup.exists() {
+        if std::fs::read(&path).is_ok_and(|current| current == bytes) {
+            std::fs::remove_file(&path)
+                .map_err(|source| Error::io(IoAction::Write, &path, source))?;
+            std::fs::rename(&backup, &path)
+                .map_err(|source| Error::io(IoAction::Write, &path, source))?;
+            return write_proxy(system_dir, candidates, bytes);
+        }
         return Err(Error::ProxyNamesTaken);
     }
     std::fs::rename(&path, &backup).map_err(|source| Error::io(IoAction::Write, &path, source))?;
@@ -242,7 +267,7 @@ fn await_key(
     rx.try_recv().ok()
 }
 
-fn terminate_client(process: &OwnedHandle, _main_thread: &OwnedHandle) {
+fn terminate_client(process: &OwnedHandle) {
     let job_bits = JOB_HANDLE.swap(0, Ordering::SeqCst);
     let job = if job_bits != 0 { OwnedHandle::from_raw(job_bits as HANDLE) } else { None };
     unsafe {
@@ -287,7 +312,7 @@ fn capture(
         ResumeThread(main_thread.as_raw());
     }
     let captured = await_key(&rx, timeout, on_wait);
-    terminate_client(&process, &main_thread);
+    terminate_client(&process);
     let data = captured.filter(|bytes| !bytes.is_empty()).ok_or(Error::CaptureTimeout)?;
     noise::stir((data.len() as u32) ^ 0xAADE_C0DE);
     let text = String::from_utf8_lossy(&data);
@@ -381,6 +406,38 @@ mod tests {
         remove_proxy(&planted);
         assert_eq!(std::fs::read(&planted.path).expect("read"), b"original");
         assert!(!backup.exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn heals_own_leftover_from_a_killed_run() {
+        let dir = scratch_dir("stale");
+        for name in candidates() {
+            std::fs::write(dir.join(&name), b"original").expect("seed");
+        }
+        // Simulate the crash window
+        std::fs::rename(dir.join("ddraw.dll"), dir.join("_ddraw.dll")).expect("stash");
+        std::fs::write(dir.join("ddraw.dll"), b"proxy").expect("leftover");
+        let planted = write_proxy(&dir, &candidates(), b"proxy").expect("heals");
+        assert_eq!(planted.path, dir.join("ddraw.dll"));
+        assert_eq!(std::fs::read(&planted.path).expect("read"), b"proxy");
+        let backup = planted.backup.clone().expect("backup recorded");
+        assert_eq!(std::fs::read(&backup).expect("read"), b"original");
+        remove_proxy(&planted);
+        assert_eq!(std::fs::read(&planted.path).expect("read"), b"original");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn foreign_squatter_with_backup_still_errors() {
+        let dir = scratch_dir("foreign");
+        for name in candidates() {
+            std::fs::write(dir.join(&name), b"original").expect("seed");
+        }
+        std::fs::write(dir.join("_ddraw.dll"), b"someone else").expect("seed");
+        let Err(Error::ProxyNamesTaken) = write_proxy(&dir, &candidates(), b"proxy") else {
+            panic!("foreign files must keep ProxyNamesTaken");
+        };
         std::fs::remove_dir_all(&dir).ok();
     }
 }
