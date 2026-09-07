@@ -39,12 +39,22 @@ fn report_outcome(outcome: &Outcome, output_root: &Path) {
             term::plain_line(obfstr!("Result:"), &format!("{name} decrypted"));
         } else {
             let name = short_name(&outcome.failures[0].0);
-            term::plain_line(obfstr!("Result:"), &format!("{name} failed"));
+            let msg = if outcome.failures[0].1.is_key_mismatch() {
+                format!("{name} failed ({})", failure_detail(outcome))
+            } else {
+                format!("{name} failed")
+            };
+            term::plain_line(obfstr!("Result:"), &msg);
         }
     } else if total == 2 && outcome.clean_paths.len() == 1 && outcome.failures.len() == 1 {
         let ok_name = short_name(&outcome.clean_paths[0]);
         let fail_name = short_name(&outcome.failures[0].0);
-        term::plain_line(obfstr!("Result:"), &format!("{ok_name} decrypted, {fail_name} failed"));
+        let msg = if outcome.failures[0].1.is_key_mismatch() {
+            format!("{ok_name} decrypted, {fail_name} failed ({})", failure_detail(outcome))
+        } else {
+            format!("{ok_name} decrypted, {fail_name} failed")
+        };
+        term::plain_line(obfstr!("Result:"), &msg);
     } else if outcome.failures.is_empty() {
         let n = outcome.clean_paths.len();
         let msg = if n == 1 {
@@ -56,23 +66,49 @@ fn report_outcome(outcome: &Outcome, output_root: &Path) {
     } else if outcome.clean_paths.is_empty() {
         term::plain_line(
             obfstr!("Result:"),
-            &format!("0 decrypted, {} failed", outcome.failures.len()),
+            &format!(
+                "0 decrypted, {} failed ({})",
+                outcome.failures.len(),
+                failure_detail(outcome)
+            ),
         );
     } else {
-        let names: Vec<String> = outcome.failures.iter().map(|(p, _)| short_name(p)).collect();
         term::plain_line(
             obfstr!("Result:"),
             &format!(
                 "{} decrypted, {} failed ({})",
                 outcome.clean_paths.len(),
                 outcome.failures.len(),
-                names.join(", ")
+                failure_detail(outcome),
             ),
         );
     }
     if !outcome.clean_paths.is_empty() {
         term::plain_line(obfstr!("Clean files:"), &output_root.display().to_string());
     }
+}
+
+fn failure_detail(outcome: &Outcome) -> String {
+    let mut key_files = Vec::new();
+    let mut other_files = Vec::new();
+    for (path, error) in &outcome.failures {
+        if error.is_key_mismatch() {
+            key_files.push(short_name(path));
+        } else {
+            other_files.push(short_name(path));
+        }
+    }
+    let mut parts = Vec::new();
+    if !key_files.is_empty() {
+        parts.push(format!(
+            "looks like we're missing the right key in memory for these files: {}",
+            key_files.join(", ")
+        ));
+    }
+    if !other_files.is_empty() {
+        parts.push(other_files.join(", "));
+    }
+    parts.join("; ")
 }
 
 /// Parallel decode of every found container with one profile.
@@ -110,7 +146,10 @@ fn decode_all(
                 };
                 (true, label, None)
             }
-            Err(error) => (false, target_rel.clone(), Some(error.to_string())),
+            Err(error) => {
+                let reason = (!error.is_key_mismatch()).then(|| error.to_string());
+                (false, target_rel.clone(), reason)
+            }
         };
         term::step_result(current_step, files.len(), &label, is_ok, err_str.as_deref());
         let mut outcome_guard = outcome_mutex.lock().unwrap_or_else(|e| e.into_inner());
@@ -306,4 +345,55 @@ pub fn run_hash_manifest_files(paths: &[PathBuf]) {
         println!("      {reason}");
     }
     finish(true);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::DecodeFailure;
+
+    fn key_failure(name: &str) -> (PathBuf, Error) {
+        (
+            PathBuf::from(name),
+            Error::DecodeFailed {
+                failures: vec![DecodeFailure {
+                    profile: "cache".to_owned(),
+                    error: Error::Pkcs1PaddingInvalid,
+                }],
+            },
+        )
+    }
+
+    fn outcome_of(failures: Vec<(PathBuf, Error)>) -> Outcome {
+        Outcome { clean_paths: Vec::new(), failures }
+    }
+
+    #[test]
+    fn detail_explains_key_mismatch_only() {
+        let detail = failure_detail(&outcome_of(vec![key_failure("a/Service.u")]));
+        assert_eq!(
+            detail,
+            "looks like we're missing the right key in memory for these files: Service.u"
+        );
+    }
+
+    #[test]
+    fn detail_splits_mixed_failures() {
+        let detail = failure_detail(&outcome_of(vec![
+            key_failure("Service.u"),
+            (PathBuf::from("Maps/x.unr"), Error::NotAacContainer),
+        ]));
+        assert!(detail.starts_with("looks like we're missing the right key"), "{detail}");
+        assert!(detail.contains("Service.u"), "{detail}");
+        assert!(detail.contains("x.unr"), "{detail}");
+    }
+
+    #[test]
+    fn detail_keeps_plain_names_without_key_mismatch() {
+        let detail = failure_detail(&outcome_of(vec![(
+            PathBuf::from("Maps/x.unr"),
+            Error::NotAacContainer,
+        )]));
+        assert_eq!(detail, "x.unr");
+    }
 }

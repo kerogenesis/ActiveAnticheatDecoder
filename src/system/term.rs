@@ -171,8 +171,6 @@ pub fn error(text: &str) {
     println!("  {}", paint(Color::Red, text));
 }
 
-/// Tag for files that went through GamekitData conversion. Painted only on
-/// interactive terminals; plain text otherwise.
 pub fn gamekit_tag() -> String {
     paint(Color::LightBlue, "[GamekitData]")
 }
@@ -185,8 +183,10 @@ pub fn step_result(index: usize, total: usize, label: &str, is_ok: bool, reason:
         println!("  {prefix} {label}");
     } else {
         let prefix = paint(Color::Red, &format!("  [{index:>width$}/{total}]"));
-        let err = reason.unwrap_or_default();
-        println!("  {prefix} {label} (Error: {err})");
+        match reason {
+            Some(err) => println!("  {prefix} {label} (Error: {err})"),
+            None => println!("  {prefix} {label}"),
+        }
     }
 }
 

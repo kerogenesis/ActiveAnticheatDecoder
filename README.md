@@ -23,13 +23,10 @@ Just run the program and pick your client folder, or drag and drop it onto the `
 
 > [!NOTE]
 > **Scryde Integration**  
-> Check config.ini. By default, `scryde_gamekitdata_auto_decode = true`.  
-Decrypting `ActiveAnticheatCrypt` automatically decodes `GamekitData` into `Lineage2Ver`.  
-You can disable this in the configuration file if needed.
-
-> [!IMPORTANT]
-> **Standalone GamekitData decoding**  
-> If you want to use the `GamekitData` decoder separately without `ActiveAnticheatDecoder`, check out [ScrydeEncDec](https://github.com/kerogenesis/ScrydeEncDec).
+> Enabled by default via `scryde_gamekitdata_auto_decode = true` in `config.ini`  
+> (automatically swaps the `GamekitData` header to `Lineage2Ver`).
+> 
+> For standalone decoding, you can use [ScrydeEncDec](https://github.com/kerogenesis/ScrydeEncDec).
 
 ### Environment
 

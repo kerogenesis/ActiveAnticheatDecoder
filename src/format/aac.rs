@@ -1,7 +1,7 @@
 //! ActiveAnticheatCrypt container decoding.
 
 use crate::crypto::{hex::hex_to_bytes, rc4};
-use crate::error::{Error, Result};
+use crate::error::{DecodeFailure, Error, Result};
 use num_bigint::BigUint;
 use obfstr::{obfbytes, obfstr};
 
@@ -111,14 +111,14 @@ pub fn decode_with_profile(file_bytes: &[u8], profile: &RsaProfile) -> Result<De
 }
 
 pub fn decode_any(file_bytes: &[u8], profiles: &[RsaProfile]) -> Result<Decoded> {
-    let mut reasons = Vec::new();
+    let mut failures = Vec::new();
     for profile in profiles {
         match decode_with_profile(file_bytes, profile) {
             Ok(decoded) => return Ok(decoded),
-            Err(error) => reasons.push(format!("{}: {error}", profile.source)),
+            Err(error) => failures.push(DecodeFailure { profile: profile.source.clone(), error }),
         }
     }
-    Err(Error::DecodeFailed { reasons })
+    Err(Error::DecodeFailed { failures })
 }
 
 #[cfg(test)]
