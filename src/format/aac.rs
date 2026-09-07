@@ -82,7 +82,7 @@ pub struct Decoded {
     pub plaintext: Vec<u8>,
 }
 
-pub fn decode_with_profile(file_bytes: &[u8], profile: &RsaProfile) -> Result<Decoded> {
+fn rc4_key_for_file(file_bytes: &[u8], profile: &RsaProfile) -> Result<Vec<u8>> {
     if !is_aac_container(file_bytes) {
         return Err(Error::NotAacContainer);
     }
@@ -95,26 +95,34 @@ pub fn decode_with_profile(file_bytes: &[u8], profile: &RsaProfile) -> Result<De
     let block = fixed_be_block(&decrypted);
     let message = pkcs1_v15_type2_unpad(&block).ok_or(Error::Pkcs1PaddingInvalid)?;
     let magic = obfbytes!(b"ActiveAnticheatCrypt");
-    let rc4_key: Vec<u8> = match message.len() {
+    match message.len() {
         40 => {
             if &message[..20] != magic {
                 return Err(Error::AacMagicMissing);
             }
-            message[20..40].to_vec()
+            Ok(message[20..40].to_vec())
         }
-        20 => message.to_vec(),
-        other => return Err(Error::UnexpectedRsaMessageLen { got: other }),
-    };
-    let mut plaintext = file_bytes[PAYLOAD_OFFSET..].to_vec();
-    rc4::crypt_in_place(&mut plaintext, &rc4_key);
-    Ok(Decoded { plaintext })
+        20 => Ok(message.to_vec()),
+        other => Err(Error::UnexpectedRsaMessageLen { got: other }),
+    }
 }
 
-pub fn decode_any(file_bytes: &[u8], profiles: &[RsaProfile]) -> Result<Decoded> {
+pub fn decode_with_profile(mut file_bytes: Vec<u8>, profile: &RsaProfile) -> Result<Decoded> {
+    let rc4_key = rc4_key_for_file(&file_bytes, profile)?;
+    file_bytes.drain(..PAYLOAD_OFFSET);
+    rc4::crypt_in_place(&mut file_bytes, &rc4_key);
+    Ok(Decoded { plaintext: file_bytes })
+}
+
+pub fn decode_any(mut file_bytes: Vec<u8>, profiles: &[RsaProfile]) -> Result<Decoded> {
     let mut failures = Vec::new();
     for profile in profiles {
-        match decode_with_profile(file_bytes, profile) {
-            Ok(decoded) => return Ok(decoded),
+        match rc4_key_for_file(&file_bytes, profile) {
+            Ok(rc4_key) => {
+                file_bytes.drain(..PAYLOAD_OFFSET);
+                rc4::crypt_in_place(&mut file_bytes, &rc4_key);
+                return Ok(Decoded { plaintext: file_bytes });
+            }
             Err(error) => failures.push(DecodeFailure { profile: profile.source.clone(), error }),
         }
     }

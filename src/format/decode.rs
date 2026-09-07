@@ -12,7 +12,7 @@ use crate::storage::output;
 /// Returns the destination plus whether Gamekit conversion applied.
 pub fn decode_aac_file(
     path: &Path,
-    bytes: &[u8],
+    bytes: Vec<u8>,
     profiles: &[aac::RsaProfile],
     root: &Path,
     output_root: &Path,

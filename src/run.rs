@@ -129,7 +129,7 @@ fn decode_all(
             .and_then(|bytes| {
                 fmt_decode::decode_aac_file(
                     source,
-                    &bytes,
+                    bytes,
                     std::slice::from_ref(profile),
                     root,
                     output_root,
