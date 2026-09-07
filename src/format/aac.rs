@@ -107,13 +107,6 @@ fn rc4_key_for_file(file_bytes: &[u8], profile: &RsaProfile) -> Result<Vec<u8>> 
     }
 }
 
-pub fn decode_with_profile(mut file_bytes: Vec<u8>, profile: &RsaProfile) -> Result<Decoded> {
-    let rc4_key = rc4_key_for_file(&file_bytes, profile)?;
-    file_bytes.drain(..PAYLOAD_OFFSET);
-    rc4::crypt_in_place(&mut file_bytes, &rc4_key);
-    Ok(Decoded { plaintext: file_bytes })
-}
-
 pub fn decode_any(mut file_bytes: Vec<u8>, profiles: &[RsaProfile]) -> Result<Decoded> {
     let mut failures = Vec::new();
     for profile in profiles {

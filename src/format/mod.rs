@@ -5,7 +5,7 @@ pub mod manifest;
 
 pub use aac::{
     Decoded, PAYLOAD_OFFSET, RSA_BLOCK_LEN, RSA_BLOCK_OFFSET, RsaProfile, decode_any,
-    decode_with_profile, header_is_aac, is_aac_container, parse_rsa_log,
+    header_is_aac, is_aac_container, parse_rsa_log,
 };
 pub use gamekit::{FormatType, detect_format, patch_to_lineage2};
 pub use manifest::{
