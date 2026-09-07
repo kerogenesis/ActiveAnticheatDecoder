@@ -30,13 +30,25 @@ fn parse_ini_key(text: &str, target_key: &str) -> Option<String> {
         if let Some((key, value)) = trimmed.split_once('=')
             && key.trim().eq_ignore_ascii_case(target_key)
         {
-            let val = value.trim();
+            let val = strip_inline_comment(value.trim()).trim();
             if !val.is_empty() {
                 return Some(val.to_string());
             }
         }
     }
     None
+}
+
+fn strip_inline_comment(value: &str) -> &str {
+    let bytes = value.as_bytes();
+    for (index, byte) in bytes.iter().enumerate() {
+        if (*byte == b';' || *byte == b'#')
+            && (index == 0 || bytes[index - 1].is_ascii_whitespace())
+        {
+            return &value[..index];
+        }
+    }
+    value
 }
 
 fn read_config(config_path: &Path) -> Option<String> {
@@ -67,7 +79,12 @@ pub fn proxy_candidates(config_path: &Path) -> Vec<String> {
 pub fn scryde_gamekitdata_auto_decode(config_path: &Path) -> bool {
     read_config(config_path)
         .and_then(|text| parse_ini_key(&text, obfstr!("scryde_gamekitdata_auto_decode")))
-        .map(|val| !matches!(val.trim().to_lowercase().as_str(), "false" | "0" | "no"))
+        .map(|val| {
+            !matches!(
+                val.trim().to_lowercase().as_str(),
+                "false" | "0" | "no" | "n" | "off" | "disable" | "disabled"
+            )
+        })
         .unwrap_or(true)
 }
 
@@ -108,5 +125,37 @@ mod tests {
             let names = candidates_from(Some(evil.to_owned()));
             assert_eq!(names, vec!["ddraw.dll", "d3d9.dll", "xinput1_4.dll"], "{evil}");
         }
+    }
+
+    #[test]
+    fn inline_comments_are_stripped_from_values() {
+        let text = "proxy_name = ddraw.dll ; use this one\n";
+        assert_eq!(parse_ini_key(text, "proxy_name"), Some("ddraw.dll".to_owned()));
+        let text = "proxy_name = ddraw.dll #keep\n";
+        assert_eq!(parse_ini_key(text, "proxy_name"), Some("ddraw.dll".to_owned()));
+        let text = "proxy_name = ; nothing here\nproxy_name = d3d9.dll\n";
+        assert_eq!(parse_ini_key(text, "proxy_name"), Some("d3d9.dll".to_owned()));
+    }
+
+    #[test]
+    fn semicolon_without_space_stays_in_value() {
+        let text = "proxy_name = weird;name.dll\n";
+        assert_eq!(parse_ini_key(text, "proxy_name"), Some("weird;name.dll".to_owned()));
+    }
+
+    #[test]
+    fn falsy_values_disable_auto_decode() {
+        let path = std::env::temp_dir().join("aac-decoder-bool-falsy-test.ini");
+        for falsy in ["false", "0", "no", "n", "off", "disable", "disabled", "FALSE", " Off "] {
+            std::fs::write(&path, format!("scryde_gamekitdata_auto_decode = {falsy}\n"))
+                .expect("scratch ini");
+            assert!(!scryde_gamekitdata_auto_decode(&path), "{falsy}");
+        }
+        for truthy in ["true", "1", "yes", ""] {
+            std::fs::write(&path, format!("scryde_gamekitdata_auto_decode = {truthy}\n"))
+                .expect("scratch ini");
+            assert!(scryde_gamekitdata_auto_decode(&path), "{truthy}");
+        }
+        let _ = std::fs::remove_file(&path);
     }
 }
