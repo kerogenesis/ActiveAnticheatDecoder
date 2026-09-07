@@ -82,8 +82,13 @@ pub fn relative(path: &Path, base: &Path) -> String {
 }
 
 pub fn mirrored_path(root: &Path, source: &Path, output_root: &Path) -> PathBuf {
-    let relative = source.strip_prefix(root).unwrap_or(source);
-    output_root.join(relative)
+    match source.strip_prefix(root) {
+        Ok(relative) => output_root.join(relative),
+        Err(_) => match source.file_name() {
+            Some(name) => output_root.join(name),
+            None => output_root.to_path_buf(),
+        },
+    }
 }
 
 pub fn output_path_for(root: &Path, source: &Path, output_root: &Path, suffix: &str) -> PathBuf {
@@ -135,6 +140,15 @@ mod tests {
             output_path_for(root, source, out, "_clean.txt"),
             PathBuf::from("/out/system/armorgrp_clean.txt")
         );
+    }
+
+    #[test]
+    fn foreign_paths_cannot_escape_the_output_root() {
+        let root = Path::new("/client");
+        let out = Path::new("/out");
+        let foreign = mirrored_path(root, Path::new("/elsewhere/evil.u"), out);
+        assert_eq!(foreign, PathBuf::from("/out/evil.u"));
+        assert!(!foreign.to_string_lossy().contains("elsewhere"));
     }
 
     #[test]
