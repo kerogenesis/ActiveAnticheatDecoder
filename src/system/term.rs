@@ -166,7 +166,7 @@ pub fn plain_label(label: &str) {
     println!("{label}");
 }
 
-pub fn error(text: &str) {
+pub fn error_line(text: &str) {
     let _guard = CONSOLE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
     println!("  {}", paint(Color::Red, text));
 }

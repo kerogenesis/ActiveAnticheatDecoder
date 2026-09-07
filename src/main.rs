@@ -24,23 +24,12 @@ fn main() {
         if root.is_dir() {
             run::run_scan(&root, true);
         } else {
-            term::error(&format!("{} {}", obfstr!("not a folder:"), root.display()));
-            run::finish(true);
+            term::error_line(&format!("{} {}", obfstr!("not a folder:"), root.display()));
+            run::wait_before_exit(true);
         }
         return;
     }
-    let mut directories = Vec::new();
-    let mut files = Vec::new();
-    let mut missing = Vec::new();
-    for path in arguments {
-        if path.is_dir() {
-            directories.push(path);
-        } else if path.is_file() {
-            files.push(path);
-        } else {
-            missing.push(path);
-        }
-    }
+    let CliPaths { directories, files, missing } = split_cli_paths(arguments);
     let hash_manifest_drop = !files.is_empty()
         && directories.is_empty()
         && missing.is_empty()
@@ -52,7 +41,7 @@ fn main() {
     term::ensure_console();
     run::banner();
     for path in &missing {
-        term::error(&format!("{} {}", obfstr!("path not found:"), path.display()));
+        term::error_line(&format!("{} {}", obfstr!("path not found:"), path.display()));
     }
     if !files.is_empty() {
         run::run_dropped_files(&files);
@@ -61,7 +50,7 @@ fn main() {
     let mut seen_roots: HashSet<String> = HashSet::new();
     for directory in &directories {
         let Some(layout) = resolve_client_layout_with_ancestors(directory) else {
-            term::error(&format!("{} {}", obfstr!("not a client folder:"), directory.display()));
+            term::error_line(&format!("{} {}", obfstr!("not a client folder:"), directory.display()));
             continue;
         };
         // Windows paths are case-insensitive,
@@ -77,4 +66,48 @@ fn main() {
 /// Lowercase, slash-normalized root key for dedup on Windows.
 fn normalize_root_key(root: &str) -> String {
     root.replace('/', "\\").trim_end_matches('\\').to_lowercase()
+}
+
+#[derive(Default)]
+struct CliPaths {
+    directories: Vec<PathBuf>,
+    files: Vec<PathBuf>,
+    missing: Vec<PathBuf>,
+}
+
+fn split_cli_paths(arguments: Vec<PathBuf>) -> CliPaths {
+    let mut paths = CliPaths::default();
+    for path in arguments {
+        if path.is_dir() {
+            paths.directories.push(path);
+        } else if path.is_file() {
+            paths.files.push(path);
+        } else {
+            paths.missing.push(path);
+        }
+    }
+    paths
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn splits_dirs_files_and_missing() {
+        let dir = std::env::temp_dir().join("aac-decoder-cli-split-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("sub")).expect("scratch dir");
+        std::fs::write(dir.join("sub").join("f.dat"), b"x").expect("scratch file");
+        let missing = dir.join("nope");
+        let split = split_cli_paths(vec![
+            dir.join("sub"),
+            dir.join("sub").join("f.dat"),
+            missing.clone(),
+        ]);
+        assert_eq!(split.directories, vec![dir.join("sub")]);
+        assert_eq!(split.files, vec![dir.join("sub").join("f.dat")]);
+        assert_eq!(split.missing, vec![missing]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

@@ -20,31 +20,30 @@ fn hash_file(path: &Path) -> Option<String> {
     hasher.update(len.to_le_bytes());
 
     let mut head = vec![0u8; 512 * 1024];
-    let mut filled = 0usize;
-    while filled < head.len() {
-        match file.read(&mut head[filled..]) {
-            Ok(0) | Err(_) => break,
-            Ok(m) => filled += m,
-        }
-    }
+    let filled = fill_chunk(&mut file, &mut head);
     hasher.update(&head[..filled]);
 
     if len > 1024 * 1024 {
         let tail_size = (512 * 1024).min(len as usize);
         if file.seek(SeekFrom::End(-(tail_size as i64))).is_ok() {
             let mut tail = vec![0u8; tail_size];
-            let mut filled = 0usize;
-            while filled < tail_size {
-                match file.read(&mut tail[filled..]) {
-                    Ok(0) | Err(_) => break,
-                    Ok(m) => filled += m,
-                }
-            }
+            let filled = fill_chunk(&mut file, &mut tail);
             hasher.update(&tail[..filled]);
         }
     }
     let digest = hasher.finalize();
     Some(to_hex(&digest))
+}
+
+fn fill_chunk(file: &mut std::fs::File, buf: &mut [u8]) -> usize {
+    let mut filled = 0;
+    while filled < buf.len() {
+        match file.read(&mut buf[filled..]) {
+            Ok(0) | Err(_) => break,
+            Ok(read) => filled += read,
+        }
+    }
+    filled
 }
 
 pub fn cache_key(system_dir: &Path, client_exe: &str) -> String {

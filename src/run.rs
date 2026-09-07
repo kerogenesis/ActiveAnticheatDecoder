@@ -168,7 +168,7 @@ fn is_cache_poisoned(outcome: &Outcome, source: AcquireSource) -> bool {
         && outcome.failures.iter().all(|(_, e)| matches!(e, Error::DecodeFailed { .. }))
 }
 
-pub fn finish(interactive: bool) {
+pub fn wait_before_exit(interactive: bool) {
     if interactive && term::owns_console() {
         term::press_any_key(obfstr!("Press any key to exit . . ."));
     }
@@ -181,8 +181,8 @@ pub fn banner() {
 pub fn run_scan(picked: &Path, interactive: bool) {
     let Some(layout) = resolve_client_layout(picked) else {
         term::field_line(obfstr!("+ Client:"), &picked.display().to_string());
-        term::error(obfstr!("I can't find the client here: expected system\\l2.exe..."));
-        finish(interactive);
+        term::error_line(obfstr!("I can't find the client here: expected system\\l2.exe..."));
+        wait_before_exit(interactive);
         return;
     };
 
@@ -206,7 +206,7 @@ pub fn run_scan(picked: &Path, interactive: bool) {
         Ok(a) => a,
         Err(error) => {
             term::field_line(obfstr!("+ Status:"), &format!("Key capture failed: {error}"));
-            finish(interactive);
+            wait_before_exit(interactive);
             return;
         }
     };
@@ -221,7 +221,7 @@ pub fn run_scan(picked: &Path, interactive: bool) {
     let result = scan::scan_tree(root, &mut |examined| spinner.tick(examined));
     spinner.finish();
     for error in &result.walk_errors {
-        term::error(&format!("{} {error}", obfstr!("scan walk error:")));
+        term::error_line(&format!("{} {error}", obfstr!("scan walk error:")));
     }
 
     let status =
@@ -229,7 +229,7 @@ pub fn run_scan(picked: &Path, interactive: bool) {
     term::field_line(obfstr!("+ Status:"), &status);
 
     if result.aac.is_empty() {
-        finish(interactive);
+        wait_before_exit(interactive);
         return;
     }
 
@@ -239,7 +239,7 @@ pub fn run_scan(picked: &Path, interactive: bool) {
         decode_all(&result.aac, &acquired.profile, root, &output_root, auto_decode_gamekit);
 
     if is_cache_poisoned(&outcome, acquired.source) {
-        term::error(obfstr!("Cached key failed for all files — retrying live capture..."));
+        term::error_line(obfstr!("Cached key failed for all files — retrying live capture..."));
         cache::invalidate_cache(system_dir, &layout.executable);
         if let Ok(live) =
             acquire_profile(system_dir, &layout.executable, &candidates, PROXY_DLL, CAPTURE_TIMEOUT)
@@ -261,7 +261,7 @@ pub fn run_scan(picked: &Path, interactive: bool) {
     }
 
     report_outcome(&outcome, &output_root);
-    finish(interactive);
+    wait_before_exit(interactive);
 }
 
 fn decode_dropped_file(path: &Path, name: &str, output_root: &Path) -> Result<PathBuf> {
@@ -309,7 +309,7 @@ pub fn run_dropped_files(paths: &[PathBuf]) {
 
     let outcome = outcome_mutex.into_inner().unwrap_or_else(|e| e.into_inner());
     report_outcome(&outcome, &output_root);
-    finish(true);
+    wait_before_exit(true);
 }
 
 pub fn run_hash_manifest_files(paths: &[PathBuf]) {
@@ -339,12 +339,12 @@ pub fn run_hash_manifest_files(paths: &[PathBuf]) {
 
     term::ensure_console();
     banner();
-    term::error(&format!("{} {}", obfstr!("Failed files:"), failures.len()));
+    term::error_line(&format!("{} {}", obfstr!("Failed files:"), failures.len()));
     for (path, reason) in &failures {
         println!("    {}", path.display());
         println!("      {reason}");
     }
-    finish(true);
+    wait_before_exit(true);
 }
 
 #[cfg(test)]
