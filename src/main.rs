@@ -50,7 +50,11 @@ fn main() {
     let mut seen_roots: HashSet<String> = HashSet::new();
     for directory in &directories {
         let Some(layout) = resolve_client_layout_with_ancestors(directory) else {
-            term::error_line(&format!("{} {}", obfstr!("not a client folder:"), directory.display()));
+            term::error_line(&format!(
+                "{} {}",
+                obfstr!("not a client folder:"),
+                directory.display()
+            ));
             continue;
         };
         // Windows paths are case-insensitive,
@@ -100,11 +104,8 @@ mod tests {
         std::fs::create_dir_all(dir.join("sub")).expect("scratch dir");
         std::fs::write(dir.join("sub").join("f.dat"), b"x").expect("scratch file");
         let missing = dir.join("nope");
-        let split = split_cli_paths(vec![
-            dir.join("sub"),
-            dir.join("sub").join("f.dat"),
-            missing.clone(),
-        ]);
+        let split =
+            split_cli_paths(vec![dir.join("sub"), dir.join("sub").join("f.dat"), missing.clone()]);
         assert_eq!(split.directories, vec![dir.join("sub")]);
         assert_eq!(split.files, vec![dir.join("sub").join("f.dat")]);
         assert_eq!(split.missing, vec![missing]);
