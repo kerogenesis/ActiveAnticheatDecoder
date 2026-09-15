@@ -1,5 +1,5 @@
 //! Decoder library for ActiveAnticheat files.
-//! Lint gates live in Cargo.toml
+//! Lint gates live in `Cargo.toml`.
 
 pub mod capture;
 pub mod client;

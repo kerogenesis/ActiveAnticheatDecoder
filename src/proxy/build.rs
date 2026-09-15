@@ -1,4 +1,4 @@
-//! One binary stands in for ddraw, d3d9 or xinput1_4.
+//! One binary stands in for `ddraw`, `d3d9` or `xinput1_4`.
 //! Pre-built export table (ForwardN/OrdinalN/SharedN stubs + /EXPORT
 //! aliases, stub space reused per DLL as Forward{ordinal - base}) lets the
 //! loader accept any of the three names. Tables are dumpbin snapshots of the
@@ -93,8 +93,8 @@ fn main() {
     render_stubs();
 }
 
-/// Alias every supported name onto its stub via linker /EXPORT.
-/// x86 stdcall symbols are decorated as _Name@0.
+/// Alias every supported name onto its stub via linker `/EXPORT`.
+/// x86 stdcall symbols are decorated as `_Name@0`.
 fn emit_exports() {
     let decorated_name = |stub: &str| format!("_{stub}@0");
 

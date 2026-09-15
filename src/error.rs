@@ -101,9 +101,6 @@ pub enum Error {
         "ActiveAnticheatCrypt files need the live client: drop the client folder, or run the decoder and pick it, instead of a single file"
     )]
     DroppedAacNeedsClient,
-
-    #[error("not an ActiveAnticheatCrypt container")]
-    DroppedUnknownFormat,
 }
 
 impl Error {

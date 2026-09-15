@@ -1,4 +1,4 @@
-//! File-backed RSA profiles: keyed by SHA1 of clmods.dll (head+tail),
+//! File-backed RSA profiles: keyed by SHA1 of `clmods.dll` (head+tail),
 //! tried before live capture; poisoned entries are invalidated and retried.
 
 use std::io::{Read, Seek, SeekFrom};

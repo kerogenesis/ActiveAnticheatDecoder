@@ -1,5 +1,5 @@
 //! Live RSA key capture: sweep memory for the 0x78-byte context fingerprint
-//! and send (N_LE, D_LE) over the AA_DECODER_PIPE named pipe.
+//! and send (`N_LE`, `D_LE`) over the `AA_DECODER_PIPE` named pipe.
 
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -19,26 +19,38 @@ use windows_sys::Win32::System::Threading::{GetCurrentProcess, Sleep};
 
 const GENERIC_WRITE: u32 = 0x4000_0000;
 
+/// Low byte of the Win32 protection flags (`PAGE_*` live there).
+const PROTECTION_MASK: u32 = 0xFF;
+
 const CONTEXT_SIZE: usize = 0x78;
 const CHUNK: usize = 4 * 1024 * 1024;
 const MAX_REGION: usize = 128 * 1024 * 1024;
 const MAX_MPI: usize = 256;
 
+// MPI descriptor slots inside the 0x78-byte RSA context.
+const MPI_N_OFF: usize = 0x08;
+const MPI_ONE_OFF: usize = 0x10;
+const MPI_D_OFF: usize = 0x18;
+const MPI_T0_OFF: usize = 0x20;
+const MPI_T1_OFF: usize = 0x28;
+const MPI_T2_OFF: usize = 0x30;
+const MPI_T3_OFF: usize = 0x38;
+const MPI_T4_OFF: usize = 0x40;
+
 pub(super) static STOP: AtomicBool = AtomicBool::new(false);
 
-use crate::util::{read_u16, read_u32, wide_nul};
+use crate::util::{read_u16, read_u32, to_hex, wide_nul};
 
 struct RsaKey {
     n_le: Vec<u8>,
     d_le: Vec<u8>,
 }
 
-/// Fault-safe read of our own address space.
+/// Fault-safe read of our own address space via `ReadProcessMemory`.
 ///
-/// # Safety
-/// out must be a valid writable buffer; arbitrary address values are
-/// safe — unreadable pages fail instead of faulting.
-unsafe fn read_exact(address: usize, out: &mut [u8]) -> bool {
+/// Safe to call with any address: unreadable pages fail instead of faulting.
+/// Only `out` is written to, and it is a valid borrowed buffer by construction.
+fn read_exact(address: usize, out: &mut [u8]) -> bool {
     let mut got = 0usize;
     unsafe {
         ReadProcessMemory(
@@ -59,36 +71,30 @@ fn descriptor_matches(ctx: &[u8], offset: usize, limbs: u16) -> bool {
 /// The 0x78-byte fingerprint: 256-bit modulus plus the expected MPI shapes.
 fn context_matches(ctx: &[u8]) -> bool {
     read_u32(ctx, 4) == Some(0x100)
-        && descriptor_matches(ctx, 0x08, 64)
-        && descriptor_matches(ctx, 0x10, 1)
-        && descriptor_matches(ctx, 0x18, 64)
-        && descriptor_matches(ctx, 0x20, 32)
-        && descriptor_matches(ctx, 0x28, 32)
-        && descriptor_matches(ctx, 0x30, 32)
-        && descriptor_matches(ctx, 0x38, 32)
-        && descriptor_matches(ctx, 0x40, 32)
+        && descriptor_matches(ctx, MPI_N_OFF, 64)
+        && descriptor_matches(ctx, MPI_ONE_OFF, 1)
+        && descriptor_matches(ctx, MPI_D_OFF, 64)
+        && descriptor_matches(ctx, MPI_T0_OFF, 32)
+        && descriptor_matches(ctx, MPI_T1_OFF, 32)
+        && descriptor_matches(ctx, MPI_T2_OFF, 32)
+        && descriptor_matches(ctx, MPI_T3_OFF, 32)
+        && descriptor_matches(ctx, MPI_T4_OFF, 32)
 }
 
 /// Follow one MPI descriptor and copy its limbs out of memory.
-///
-/// # Safety
-/// Same contract as [read_exact].
-unsafe fn read_mpi(ctx: &[u8], offset: usize) -> Option<Vec<u8>> {
+fn read_mpi(ctx: &[u8], offset: usize) -> Option<Vec<u8>> {
     let pointer = read_u32(ctx, offset)? as usize;
     let size = read_u16(ctx, offset + 6)? as usize * 4;
     if pointer == 0 || size == 0 || size > MAX_MPI {
         return None;
     }
     let mut out = vec![0u8; size];
-    unsafe { read_exact(pointer, &mut out).then_some(out) }
+    read_exact(pointer, &mut out).then_some(out)
 }
 
 /// Extract (N, D) from a matching context.
-///
-/// # Safety
-/// Same contract as [read_exact].
-unsafe fn extract_key(ctx: &[u8]) -> Option<RsaKey> {
-    unsafe { Some(RsaKey { n_le: read_mpi(ctx, 0x08)?, d_le: read_mpi(ctx, 0x18)? }) }
+fn extract_key(ctx: &[u8]) -> Option<RsaKey> {
+    Some(RsaKey { n_le: read_mpi(ctx, MPI_N_OFF)?, d_le: read_mpi(ctx, MPI_D_OFF)? })
 }
 
 fn is_readable(protect: u32) -> bool {
@@ -96,7 +102,7 @@ fn is_readable(protect: u32) -> bool {
         return false;
     }
     matches!(
-        protect & 0xFF,
+        protect & PROTECTION_MASK,
         PAGE_READONLY
             | PAGE_READWRITE
             | PAGE_WRITECOPY
@@ -107,15 +113,12 @@ fn is_readable(protect: u32) -> bool {
 }
 
 /// Sweep one committed region for the fingerprint.
-///
-/// # Safety
-/// Same contract as [read_exact].
-unsafe fn scan_region(base: usize, size: usize, buffer: &mut [u8]) -> Option<RsaKey> {
+fn scan_region(base: usize, size: usize, buffer: &mut [u8]) -> Option<RsaKey> {
     let mut offset = 0;
     while offset < size {
         let remaining = size - offset;
         let wanted = remaining.min(buffer.len());
-        if !unsafe { read_exact(base + offset, &mut buffer[..wanted]) } {
+        if !read_exact(base + offset, &mut buffer[..wanted]) {
             offset += 4096;
             continue;
         }
@@ -123,11 +126,10 @@ unsafe fn scan_region(base: usize, size: usize, buffer: &mut [u8]) -> Option<Rsa
             let mut local = 0;
             while local + CONTEXT_SIZE <= wanted {
                 let ctx = &buffer[local..local + CONTEXT_SIZE];
-                if context_matches(ctx) {
-                    // SAFETY: same fault-safe reads as everywhere else.
-                    if let Some(key) = unsafe { extract_key(ctx) } {
-                        return Some(key);
-                    }
+                if context_matches(ctx)
+                    && let Some(key) = extract_key(ctx)
+                {
+                    return Some(key);
                 }
                 local += 4;
             }
@@ -140,7 +142,7 @@ unsafe fn scan_region(base: usize, size: usize, buffer: &mut [u8]) -> Option<Rsa
     None
 }
 
-/// Sweep the whole address space; None if the key is not live yet.
+/// Sweep the whole address space; `None` if the key is not live yet.
 ///
 /// # Safety
 /// Reads only our own process memory via fault-safe probes.
@@ -174,23 +176,13 @@ unsafe fn find_rsa_key(buffer: &mut [u8]) -> Option<RsaKey> {
             && is_readable(region.Protect)
             && region.RegionSize >= CONTEXT_SIZE
             && region.RegionSize <= MAX_REGION
-            && let Some(key) = unsafe { scan_region(base, region.RegionSize, buffer) }
+            && let Some(key) = scan_region(base, region.RegionSize, buffer)
         {
             return Some(key);
         }
         cursor = next;
     }
     None
-}
-
-fn to_hex(bytes: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(DIGITS[(byte >> 4) as usize] as char);
-        out.push(DIGITS[(byte & 0x0F) as usize] as char);
-    }
-    out
 }
 
 fn send_key(key: &RsaKey) {
@@ -301,10 +293,12 @@ mod tests {
             ctx[offset + 4..offset + 6].copy_from_slice(&1u16.to_le_bytes());
             ctx[offset + 6..offset + 8].copy_from_slice(&limbs.to_le_bytes());
         };
-        descriptor(0x08, &modulus, 64);
-        descriptor(0x10, &one_limb, 1);
-        descriptor(0x18, &exponent, 64);
-        for (slot, offset) in [0x20, 0x28, 0x30, 0x38, 0x40].iter().enumerate() {
+        descriptor(MPI_N_OFF, &modulus, 64);
+        descriptor(MPI_ONE_OFF, &one_limb, 1);
+        descriptor(MPI_D_OFF, &exponent, 64);
+        for (slot, offset) in
+            [MPI_T0_OFF, MPI_T1_OFF, MPI_T2_OFF, MPI_T3_OFF, MPI_T4_OFF].iter().enumerate()
+        {
             descriptor(*offset, &ones[slot % ones.len()], 32);
         }
         Fixture { modulus, exponent, ones, ctx }
@@ -314,7 +308,7 @@ mod tests {
     fn live_context_matches_and_extracts() {
         let fixture = live_fixture();
         assert!(context_matches(&fixture.ctx));
-        let key = unsafe { extract_key(&fixture.ctx) }.expect("key extracts");
+        let key = extract_key(&fixture.ctx).expect("key extracts");
         assert_eq!(key.n_le, fixture.modulus);
         assert_eq!(key.d_le, fixture.exponent);
         assert_eq!(fixture.ones.len(), 6);
@@ -330,7 +324,7 @@ mod tests {
     #[test]
     fn oversized_mpi_is_rejected() {
         let mut fixture = live_fixture();
-        fixture.ctx[0x08 + 6..0x08 + 8].copy_from_slice(&65u16.to_le_bytes());
-        assert!(unsafe { extract_key(&fixture.ctx) }.is_none());
+        fixture.ctx[MPI_N_OFF + 6..MPI_N_OFF + 8].copy_from_slice(&65u16.to_le_bytes());
+        assert!(extract_key(&fixture.ctx).is_none());
     }
 }

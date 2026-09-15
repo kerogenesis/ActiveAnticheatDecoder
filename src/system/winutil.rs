@@ -2,9 +2,7 @@
 
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
 
-pub fn to_wide(text: &str) -> Vec<u16> {
-    text.encode_utf16().chain(std::iter::once(0)).collect()
-}
+pub use aa_shared::to_wide;
 
 pub struct OwnedHandle(HANDLE);
 

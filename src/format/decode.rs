@@ -1,4 +1,4 @@
-//! High-level decode helpers: run.rs decides what, this decides how.
+//! High-level decode helpers: `run.rs` decides what, this decides how.
 
 use std::path::{Path, PathBuf};
 
@@ -8,7 +8,7 @@ use crate::error::Result;
 use crate::format::{aac, gamekit, manifest};
 use crate::storage::output;
 
-/// AAC -> RC4 -> optional Gamekit to Lineage2Ver -> write to mirrored path.
+/// AAC -> RC4 -> optional `Gamekit` to `Lineage2Ver` -> write to mirrored path.
 /// Returns the destination plus whether Gamekit conversion applied.
 pub fn decode_aac_file(
     path: &Path,
@@ -18,7 +18,7 @@ pub fn decode_aac_file(
     output_root: &Path,
     auto_decode_gamekit: bool,
 ) -> Result<(PathBuf, bool)> {
-    let decoded = aac::decode_any(bytes, profiles)?;
+    let decoded = aac::decode_with_profiles(bytes, profiles)?;
     let destination = output::mirrored_path(root, path, output_root);
     let mut plaintext = decoded.plaintext;
     let mut gamekit = false;
@@ -29,7 +29,7 @@ pub fn decode_aac_file(
     Ok((destination, gamekit))
 }
 
-/// Hash manifest ft_* -> RC4 -> manifest text -> write with _clean.txt suffix.
+/// Hash manifest `ft_*` -> RC4 -> manifest text -> write with `_clean.txt` suffix.
 pub fn decode_hash_manifest_file(
     path: &Path,
     bytes: &[u8],

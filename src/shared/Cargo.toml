@@ -1,0 +1,13 @@
+[package]
+name = "aa_shared"
+version = "1.7.1"
+edition = "2024"
+description = "Tiny dependency-free helpers shared by decoder and aa_proxy (hex, wide strings, LE readers)"
+license = "MIT"
+
+[lib]
+name = "aa_shared"
+path = "lib.rs"
+
+[lints]
+workspace = true

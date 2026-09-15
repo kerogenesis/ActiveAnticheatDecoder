@@ -6,13 +6,13 @@ use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 #[derive(Debug, Clone)]
-pub struct Found {
+pub struct FoundContainer {
     pub path: PathBuf,
 }
 
 #[derive(Debug, Default)]
 pub struct ScanResult {
-    pub aac: Vec<Found>,
+    pub aac: Vec<FoundContainer>,
     pub files_examined: usize,
     pub walk_errors: Vec<String>,
 }
@@ -36,14 +36,18 @@ pub fn scan_tree(root: &Path, on_progress: &mut dyn FnMut(usize)) -> ScanResult 
     }
 
     // parallel header check
-    let aac: Vec<Found> = all_files
+    let aac: Vec<FoundContainer> = all_files
         .par_iter()
         .filter_map(|(path, size)| {
             if *size <= aac::PAYLOAD_OFFSET as u64 {
                 return None;
             }
             let header = read_prefix(path, 20)?;
-            if aac::header_is_aac(&header) { Some(Found { path: path.clone() }) } else { None }
+            if aac::header_is_aac(&header) {
+                Some(FoundContainer { path: path.clone() })
+            } else {
+                None
+            }
         })
         .collect();
 

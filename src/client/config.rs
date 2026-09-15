@@ -1,4 +1,4 @@
-//! Runtime configuration from config.ini next to the executable; missing
+//! Runtime configuration from `config.ini` next to the executable; missing
 //! file or key falls back to built-in defaults (ddraw first, auto-decode on).
 use obfstr::obfstr;
 use std::collections::HashSet;

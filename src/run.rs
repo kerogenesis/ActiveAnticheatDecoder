@@ -15,7 +15,7 @@ use crate::system::term;
 
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// The proxy DLL, embedded at build time (see build.rs).
+/// The proxy DLL, embedded at build time (see `build.rs`).
 const PROXY_DLL: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/aa_proxy.dll"));
 
 #[derive(Default)]
@@ -113,7 +113,7 @@ fn failure_detail(outcome: &Outcome) -> String {
 
 /// Parallel decode of every found container with one profile.
 fn decode_all(
-    files: &[scan::Found],
+    files: &[scan::FoundContainer],
     profile: &aac::RsaProfile,
     root: &Path,
     output_root: &Path,
@@ -276,7 +276,7 @@ fn decode_dropped_file(path: &Path, name: &str, output_root: &Path) -> Result<Pa
         return Err(Error::DroppedAacNeedsClient);
     }
 
-    Err(Error::DroppedUnknownFormat)
+    Err(Error::NotAacContainer)
 }
 
 pub fn run_dropped_files(paths: &[PathBuf]) {

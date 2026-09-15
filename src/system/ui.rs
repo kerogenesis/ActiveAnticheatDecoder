@@ -1,7 +1,7 @@
 //! Native "browse for folder" dialog, for the double-click case.
 //!
-//! The modern IFileOpenDialog (no MAX_PATH cap) is tried first; any
-//! technical failure falls back to the legacy SHBrowseForFolderW dialog.
+//! The modern `IFileOpenDialog` (no `MAX_PATH` cap) is tried first; any
+//! technical failure falls back to the legacy `SHBrowseForFolderW` dialog.
 //! windows-sys ships no COM interfaces, so the modern dialog is driven
 //! through its raw vtable.
 

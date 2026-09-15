@@ -1,5 +1,5 @@
 //! Universal proxy DLL: forward every export to the real system DLL, capture
-//! the live RSA key. DllMain only parses and hooks; everything else runs on
+//! the live RSA key. `DllMain` only parses and hooks; everything else runs on
 //! threads past the loader lock.
 
 use core::ffi::c_void;
@@ -13,8 +13,11 @@ use windows_sys::Win32::System::SystemServices::{DLL_PROCESS_ATTACH, DLL_PROCESS
 use windows_sys::Win32::System::Threading::CreateThread;
 use windows_sys::core::BOOL;
 
+mod image;
 mod payload;
+mod pool;
 mod proxy;
+mod thunk;
 mod util;
 
 include!(concat!(env!("OUT_DIR"), "/stubs.rs"));

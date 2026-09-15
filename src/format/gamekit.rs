@@ -36,7 +36,7 @@ pub fn detect_format(data: &[u8]) -> Option<FormatType> {
     }
 }
 
-/// Patch a GamekitData header into its Lineage2Ver shape in place.
+/// Patch a `GamekitData` header into its `Lineage2Ver` shape in place.
 pub fn patch_to_lineage2(data: &mut [u8]) -> bool {
     if !matches!(
         detect_format(data),

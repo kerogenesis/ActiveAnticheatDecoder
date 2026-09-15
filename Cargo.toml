@@ -7,7 +7,7 @@ license = "MIT"
 exclude = ["src/proxy/"]
 
 [workspace]
-members = ["src/proxy"]
+members = ["src/proxy", "src/shared"]
 resolver = "2"
 
 [workspace.lints.clippy]
@@ -33,6 +33,7 @@ name = "decoder"
 path = "src/main.rs"
 
 [dependencies]
+aa_shared = { path = "src/shared" }
 obfstr = "0.4.6"
 num-bigint = "0.4"
 rayon = "1.10"

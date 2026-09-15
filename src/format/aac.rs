@@ -67,7 +67,7 @@ fn pkcs1_v15_type2_unpad(block: &[u8]) -> Option<&[u8]> {
 ///
 /// num-bigint's to_bytes_be trims leading zeros, but PKCS#1 v1.5 parsing
 /// requires the full RSA block width - without the zero padding every small
-/// plaintext would be rejected at block[0] != 0x00.
+/// plaintext would be rejected at `block[0] != 0x00`.
 /// Returns stack-allocated block to avoid per-file heap allocation.
 #[inline]
 fn fixed_be_block(value: &BigUint) -> [u8; RSA_BLOCK_LEN] {
@@ -107,7 +107,7 @@ fn rc4_key_for_file(file_bytes: &[u8], profile: &RsaProfile) -> Result<Vec<u8>> 
     }
 }
 
-pub fn decode_any(mut file_bytes: Vec<u8>, profiles: &[RsaProfile]) -> Result<Decoded> {
+pub fn decode_with_profiles(mut file_bytes: Vec<u8>, profiles: &[RsaProfile]) -> Result<Decoded> {
     let mut failures = Vec::new();
     for profile in profiles {
         match rc4_key_for_file(&file_bytes, profile) {

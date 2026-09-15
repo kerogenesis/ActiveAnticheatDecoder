@@ -10,6 +10,9 @@ name = "aa_proxy"
 path = "lib.rs"
 crate-type = ["cdylib"]
 
+[dependencies]
+aa_shared = { path = "../shared" }
+
 [dependencies.windows-sys]
 version = "0.61.2"
 features = [

@@ -29,22 +29,22 @@ fn main() {
         }
         return;
     }
-    let CliPaths { directories, files, missing } = split_cli_paths(arguments);
-    let hash_manifest_drop = !files.is_empty()
+    let CliPaths { directories, dropped_files, missing_paths } = split_cli_paths(arguments);
+    let hash_manifest_drop = !dropped_files.is_empty()
         && directories.is_empty()
-        && missing.is_empty()
-        && files.iter().all(|path| output::is_hash_manifest_path(path));
+        && missing_paths.is_empty()
+        && dropped_files.iter().all(|path| output::is_hash_manifest_path(path));
     if hash_manifest_drop {
-        run::run_hash_manifest_files(&files);
+        run::run_hash_manifest_files(&dropped_files);
         return;
     }
     term::ensure_console();
     run::banner();
-    for path in &missing {
+    for path in &missing_paths {
         term::error_line(&format!("{} {}", obfstr!("path not found:"), path.display()));
     }
-    if !files.is_empty() {
-        run::run_dropped_files(&files);
+    if !dropped_files.is_empty() {
+        run::run_dropped_files(&dropped_files);
     }
 
     let mut seen_roots: HashSet<String> = HashSet::new();
@@ -75,8 +75,8 @@ fn normalize_root_key(root: &str) -> String {
 #[derive(Default)]
 struct CliPaths {
     directories: Vec<PathBuf>,
-    files: Vec<PathBuf>,
-    missing: Vec<PathBuf>,
+    dropped_files: Vec<PathBuf>,
+    missing_paths: Vec<PathBuf>,
 }
 
 fn split_cli_paths(arguments: Vec<PathBuf>) -> CliPaths {
@@ -85,9 +85,9 @@ fn split_cli_paths(arguments: Vec<PathBuf>) -> CliPaths {
         if path.is_dir() {
             paths.directories.push(path);
         } else if path.is_file() {
-            paths.files.push(path);
+            paths.dropped_files.push(path);
         } else {
-            paths.missing.push(path);
+            paths.missing_paths.push(path);
         }
     }
     paths
@@ -98,7 +98,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn splits_dirs_files_and_missing() {
+    fn splits_dirs_dropped_and_missing() {
         let dir = std::env::temp_dir().join("aac-decoder-cli-split-test");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("sub")).expect("scratch dir");
@@ -107,8 +107,8 @@ mod tests {
         let split =
             split_cli_paths(vec![dir.join("sub"), dir.join("sub").join("f.dat"), missing.clone()]);
         assert_eq!(split.directories, vec![dir.join("sub")]);
-        assert_eq!(split.files, vec![dir.join("sub").join("f.dat")]);
-        assert_eq!(split.missing, vec![missing]);
+        assert_eq!(split.dropped_files, vec![dir.join("sub").join("f.dat")]);
+        assert_eq!(split.missing_paths, vec![missing]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
