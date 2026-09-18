@@ -1,6 +1,6 @@
 [package]
 name = "aa_shared"
-version = "1.7.1"
+version = "1.7.2"
 edition = "2024"
 description = "Tiny dependency-free helpers shared by decoder and aa_proxy (hex, wide strings, LE readers)"
 license = "MIT"
