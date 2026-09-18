@@ -35,7 +35,7 @@ path = "src/main.rs"
 [dependencies]
 aa_shared = { path = "src/shared" }
 obfstr = "0.4.6"
-num-bigint = "0.4"
+num-bigint = "0.5"
 rayon = "1.10"
 thiserror = "2.0"
 walkdir = "2.5"
