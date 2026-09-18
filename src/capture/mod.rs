@@ -73,7 +73,6 @@ pub mod runtime {
         matches!(value.to_string_lossy().as_ref(), "1" | "true" | "TRUE" | "yes" | "YES")
     }
 
-    #[cfg(windows)]
     fn debugger_score() -> u32 {
         use windows_sys::Win32::System::Diagnostics::Debug::{
             CheckRemoteDebuggerPresent, IsDebuggerPresent,
@@ -94,11 +93,6 @@ pub mod runtime {
             score += 1;
         }
         score
-    }
-
-    #[cfg(not(windows))]
-    fn debugger_score() -> u32 {
-        0
     }
 
     fn timing_anomaly() -> bool {

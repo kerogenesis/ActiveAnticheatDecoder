@@ -12,6 +12,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 aa_shared = { path = "../shared" }
+obfstr = "0.4"
 
 [dependencies.windows-sys]
 version = "0.61.2"

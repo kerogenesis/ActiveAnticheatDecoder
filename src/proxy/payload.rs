@@ -3,6 +3,7 @@
 
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, Ordering};
+use obfstr::obfstr;
 
 use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::Storage::FileSystem::{CreateFileW, OPEN_EXISTING, WriteFile};
@@ -186,14 +187,20 @@ unsafe fn find_rsa_key(buffer: &mut [u8]) -> Option<RsaKey> {
 }
 
 fn send_key(key: &RsaKey) {
-    let var = wide_nul("AA_DECODER_PIPE");
+    let var = wide_nul(obfstr!("AA_DECODER_PIPE"));
     let mut name = [0u16; 256];
     let len =
         unsafe { GetEnvironmentVariableW(var.as_ptr(), name.as_mut_ptr(), name.len() as u32) };
     if len == 0 || len as usize >= name.len() {
         return;
     }
-    let message = format!("N_LE={}\r\nD_LE={}\r\n", to_hex(&key.n_le), to_hex(&key.d_le));
+    let message = format!(
+        "{}={}\r\n{}={}\r\n",
+        obfstr!("N_LE"),
+        to_hex(&key.n_le),
+        obfstr!("D_LE"),
+        to_hex(&key.d_le)
+    );
     let pipe = unsafe {
         CreateFileW(
             name.as_ptr(),
@@ -227,7 +234,7 @@ fn send_key(key: &RsaKey) {
 /// Run once on a dedicated thread; stops early when [STOP] is set.
 pub(super) unsafe extern "system" fn capture_thread(_: *mut c_void) -> u32 {
     const MODULE_WAIT_MS: u64 = 30_000;
-    let clmods = wide_nul("clmods.dll");
+    let clmods = wide_nul(obfstr!("clmods.dll"));
     let start = unsafe { GetTickCount64() };
     let mut ready = false;
     while unsafe { GetTickCount64() }.wrapping_sub(start) < MODULE_WAIT_MS {
