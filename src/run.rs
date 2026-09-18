@@ -1,9 +1,10 @@
 use obfstr::obfstr;
 use rayon::prelude::*;
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::channel;
 use std::time::Duration;
 
 use crate::capture::acquire::{AcquireSource, acquire_profile};
@@ -23,6 +24,13 @@ struct Outcome {
     clean_paths: Vec<PathBuf>,
     failures: Vec<(PathBuf, Error)>,
 }
+
+type DecodeOutcome = (PathBuf, String, Result<(PathBuf, bool)>);
+type DecodeMessage = (usize, DecodeOutcome);
+type PendingDecode = BTreeMap<usize, DecodeOutcome>;
+type DroppedOutcome = (PathBuf, String, Result<PathBuf>);
+type DroppedMessage = (usize, DroppedOutcome);
+type PendingDropped = BTreeMap<usize, DroppedOutcome>;
 
 fn short_name(path: &Path) -> String {
     path.file_name()
@@ -119,46 +127,61 @@ fn decode_all(
     output_root: &Path,
     auto_decode_gamekit: bool,
 ) -> Outcome {
-    let completed_counter = AtomicUsize::new(0);
-    let outcome_mutex = Mutex::new(Outcome::default());
-    files.par_iter().for_each(|found| {
-        let source = &found.path;
-        let target_rel = output::relative(source, root);
-        let decoded = fs::read(source)
-            .map_err(|source_err| Error::io(IoAction::Read, source, source_err))
-            .and_then(|bytes| {
-                fmt_decode::decode_aac_file(
-                    source,
-                    bytes,
-                    std::slice::from_ref(profile),
-                    root,
-                    output_root,
-                    auto_decode_gamekit,
-                )
+    let (tx, rx) = channel::<DecodeMessage>();
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            files.par_iter().enumerate().for_each(|(idx, found)| {
+                let source = &found.path;
+                let target_rel = output::relative(source, root);
+                let decoded = fs::read(source)
+                    .map_err(|source_err| Error::io(IoAction::Read, source, source_err))
+                    .and_then(|bytes| {
+                        fmt_decode::decode_aac_file(
+                            source,
+                            bytes,
+                            std::slice::from_ref(profile),
+                            root,
+                            output_root,
+                            auto_decode_gamekit,
+                        )
+                    });
+                let _ = tx.send((idx, (source.to_path_buf(), target_rel, decoded)));
             });
-        let current_step = completed_counter.fetch_add(1, Ordering::Relaxed) + 1;
-        let (is_ok, label, err_str) = match &decoded {
-            Ok((_, gamekit)) => {
-                let label = if *gamekit {
-                    format!("{} {target_rel}", term::gamekit_tag())
-                } else {
-                    target_rel.clone()
+        });
+
+        let mut pending: PendingDecode = BTreeMap::new();
+        let mut outcome = Outcome::default();
+        let mut next = 0usize;
+        while next < files.len() {
+            let Ok((idx, (source, target_rel, decoded))) = rx.recv() else {
+                break;
+            };
+            pending.insert(idx, (source, target_rel, decoded));
+            while let Some((source, target_rel, decoded)) = pending.remove(&next) {
+                let (is_ok, label, err_str) = match &decoded {
+                    Ok((_, gamekit)) => {
+                        let label = if *gamekit {
+                            format!("{} {target_rel}", term::gamekit_tag())
+                        } else {
+                            target_rel.clone()
+                        };
+                        (true, label, None)
+                    }
+                    Err(error) => {
+                        let reason = (!error.is_key_mismatch()).then(|| error.to_string());
+                        (false, target_rel.clone(), reason)
+                    }
                 };
-                (true, label, None)
+                term::step_result(next + 1, files.len(), &label, is_ok, err_str.as_deref());
+                match decoded {
+                    Ok((destination, _)) => outcome.clean_paths.push(destination),
+                    Err(error) => outcome.failures.push((source, error)),
+                }
+                next += 1;
             }
-            Err(error) => {
-                let reason = (!error.is_key_mismatch()).then(|| error.to_string());
-                (false, target_rel.clone(), reason)
-            }
-        };
-        term::step_result(current_step, files.len(), &label, is_ok, err_str.as_deref());
-        let mut outcome_guard = outcome_mutex.lock().unwrap_or_else(|e| e.into_inner());
-        match decoded {
-            Ok((destination, _)) => outcome_guard.clean_paths.push(destination),
-            Err(error) => outcome_guard.failures.push((source.to_path_buf(), error)),
         }
-    });
-    outcome_mutex.into_inner().unwrap_or_else(|e| e.into_inner())
+        outcome
+    })
 }
 
 fn is_cache_poisoned(outcome: &Outcome, source: AcquireSource) -> bool {
@@ -281,33 +304,50 @@ fn decode_dropped_file(path: &Path, name: &str, output_root: &Path) -> Result<Pa
 
 pub fn run_dropped_files(paths: &[PathBuf]) {
     let output_root = output::output_root();
-    let outcome_mutex = Mutex::new(Outcome::default());
-    let completed_counter = AtomicUsize::new(0);
 
     term::field_line(obfstr!("+ Files:"), &format!("{} dropped files", paths.len()));
     println!();
     term::plain_label(obfstr!("Decoding:"));
 
-    paths.par_iter().for_each(|path| {
-        let name =
-            path.file_name().map(|value| value.to_string_lossy().into_owned()).unwrap_or_default();
+    let (tx, rx) = channel::<DroppedMessage>();
+    let outcome = std::thread::scope(|s| {
+        s.spawn(|| {
+            paths.par_iter().enumerate().for_each(|(idx, path)| {
+                let name = path
+                    .file_name()
+                    .map(|value| value.to_string_lossy().into_owned())
+                    .unwrap_or_default();
 
-        let decoded = decode_dropped_file(path, &name, &output_root);
+                let decoded = decode_dropped_file(path, &name, &output_root);
 
-        let current_step = completed_counter.fetch_add(1, Ordering::Relaxed) + 1;
-        let is_ok = decoded.is_ok();
-        let err_str = decoded.as_ref().err().map(|e| e.to_string());
+                let _ = tx.send((idx, (path.to_path_buf(), name, decoded)));
+            });
+        });
 
-        term::step_result(current_step, paths.len(), &name, is_ok, err_str.as_deref());
+        let mut pending: PendingDropped = BTreeMap::new();
+        let mut outcome = Outcome::default();
+        let mut next = 0usize;
+        while next < paths.len() {
+            let Ok((idx, (path, name, decoded))) = rx.recv() else {
+                break;
+            };
+            pending.insert(idx, (path, name, decoded));
+            while let Some((path, name, decoded)) = pending.remove(&next) {
+                let is_ok = decoded.is_ok();
+                let err_str = decoded.as_ref().err().map(|e| e.to_string());
 
-        let mut outcome_guard = outcome_mutex.lock().unwrap_or_else(|e| e.into_inner());
-        match decoded {
-            Ok(destination) => outcome_guard.clean_paths.push(destination),
-            Err(error) => outcome_guard.failures.push((path.to_path_buf(), error)),
+                term::step_result(next + 1, paths.len(), &name, is_ok, err_str.as_deref());
+
+                match decoded {
+                    Ok(destination) => outcome.clean_paths.push(destination),
+                    Err(error) => outcome.failures.push((path, error)),
+                }
+                next += 1;
+            }
         }
+        outcome
     });
 
-    let outcome = outcome_mutex.into_inner().unwrap_or_else(|e| e.into_inner());
     report_outcome(&outcome, &output_root);
     wait_before_exit(true);
 }
