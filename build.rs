@@ -18,7 +18,7 @@ fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR is always set by cargo"));
     stage_proxy_dll(&out_dir);
     #[cfg(windows)]
-    embed_windows_icon(&out_dir);
+    embed_windows_resources(&out_dir);
 }
 
 fn stage_proxy_dll(out_dir: &Path) {
@@ -97,7 +97,26 @@ fn compile_proxy_dll() -> Vec<u8> {
 }
 
 #[cfg(windows)]
-fn embed_windows_icon(out_dir: &Path) {
+const APP_MANIFEST: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true</dpiAware>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2, PerMonitor</dpiAwareness>
+    </windowsSettings>
+  </application>
+</assembly>
+"#;
+
+#[cfg(windows)]
+fn embed_windows_resources(out_dir: &Path) {
     const ICON: &str = "res/app.ico";
     println!("cargo:rerun-if-changed={ICON}");
     println!("cargo:rerun-if-changed=build.rs");
@@ -127,11 +146,13 @@ fn embed_windows_icon(out_dir: &Path) {
         return;
     };
 
-    // Resource 1 is the lowest id,
-    // which is the icon Explorer shows for the application.
     let icon_ref = icon_path.display().to_string().replace('\\', "/");
+    let manifest_path = out_dir.join("app.manifest");
+    fs::write(&manifest_path, APP_MANIFEST).expect("cannot write the application manifest");
+    let manifest_ref = manifest_path.display().to_string().replace('\\', "/");
     let script = out_dir.join("app.rc");
-    fs::write(&script, format!("1 ICON \"{icon_ref}\"\n")).expect("cannot write the icon script");
+    fs::write(&script, format!("1 ICON \"{icon_ref}\"\n1 24 \"{manifest_ref}\"\n"))
+        .expect("cannot write the resource script");
 
     let resource = out_dir.join("app.res");
     let status =
