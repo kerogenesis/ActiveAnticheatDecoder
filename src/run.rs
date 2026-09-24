@@ -228,7 +228,12 @@ pub fn run_scan(picked: &Path, interactive: bool) {
     ) {
         Ok(a) => a,
         Err(error) => {
-            term::field_line(obfstr!("+ Status:"), &format!("Key capture failed: {error}"));
+            if error.is_elevation_required() {
+                term::field_line(obfstr!("+ Status:"), obfstr!("run the program as administrator"));
+                crate::system::elevation::show_elevation_required();
+            } else {
+                term::field_line(obfstr!("+ Status:"), &format!("Key capture failed: {error}"));
+            }
             wait_before_exit(interactive);
             return;
         }

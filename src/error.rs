@@ -108,6 +108,13 @@ impl Error {
         Self::Io { action, path: path.as_ref().to_path_buf(), source }
     }
 
+    pub const ELEVATION_REQUIRED_CODE: u32 = 740;
+
+    #[must_use]
+    pub fn is_elevation_required(&self) -> bool {
+        matches!(self, Self::ProcessStart { code, .. } if *code == Self::ELEVATION_REQUIRED_CODE)
+    }
+
     pub fn is_key_mismatch(&self) -> bool {
         match self {
             Self::DecodeFailed { failures } => {
@@ -165,5 +172,17 @@ mod tests {
         };
         assert!(!other.is_key_mismatch());
         assert!(!Error::NotAacContainer.is_key_mismatch());
+    }
+
+    #[test]
+    fn elevation_required_detects_win32_740() {
+        assert!(
+            Error::ProcessStart { path: PathBuf::from("l2.exe"), code: 740 }
+                .is_elevation_required()
+        );
+        assert!(
+            !Error::ProcessStart { path: PathBuf::from("l2.exe"), code: 2 }.is_elevation_required()
+        );
+        assert!(!Error::NotAacContainer.is_elevation_required());
     }
 }

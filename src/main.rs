@@ -11,11 +11,14 @@ use std::collections::HashSet;
 use decoder::client::resolve_client_layout_with_ancestors;
 use decoder::run;
 use decoder::storage::output;
-use decoder::system::{term, ui};
+use decoder::system::{elevation, term, ui};
 
 fn main() {
     let arguments: Vec<PathBuf> = env::args().skip(1).map(PathBuf::from).collect();
     if arguments.is_empty() {
+        if !elevation::require_elevation() {
+            return;
+        }
         let Some(root) = ui::choose_client_root() else {
             return;
         };
@@ -36,6 +39,10 @@ fn main() {
         && dropped_files.iter().all(|path| output::is_hash_manifest_path(path));
     if hash_manifest_drop {
         run::run_hash_manifest_files(&dropped_files);
+        return;
+    }
+    // Only client-folder scans need elevation
+    if !directories.is_empty() && !elevation::require_elevation() {
         return;
     }
     term::ensure_console();
