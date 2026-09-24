@@ -19,10 +19,7 @@
 - Uses cache on reruns for instant decryption.
 
 ### Quick Start  
-Just run the program and pick your client folder, or drag and drop it onto the `.exe`.
-
-> [!IMPORTANT]
-> Run the app as administrator.
+Just run the program with administrator rights and pick your client folder, or drag and drop it onto the `.exe`.
 
 > [!NOTE]
 > **Scryde Integration**  
