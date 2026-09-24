@@ -21,6 +21,9 @@
 ### Quick Start  
 Just run the program and pick your client folder, or drag and drop it onto the `.exe`.
 
+> [!IMPORTANT]
+> Run the app as administrator.
+
 > [!NOTE]
 > **Scryde Integration**  
 > Enabled by default via `scryde_gamekitdata_auto_decode = true` in `config.ini`  
