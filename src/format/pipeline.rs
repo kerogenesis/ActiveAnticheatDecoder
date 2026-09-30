@@ -8,8 +8,20 @@ use crate::error::Result;
 use crate::format::{aac, gamekit, manifest};
 use crate::storage::output;
 
-/// AAC -> RC4 -> optional `Gamekit` to `Lineage2Ver` -> write to mirrored path.
-/// Returns the destination plus whether Gamekit conversion applied.
+pub fn decrypt_aac_bytes(
+    bytes: Vec<u8>,
+    profiles: &[aac::RsaProfile],
+    auto_decode_gamekit: bool,
+) -> Result<(Vec<u8>, bool)> {
+    let decrypted = aac::try_decrypt_with_keys(bytes, profiles)?;
+    let mut plaintext = decrypted.plaintext;
+    let mut gamekit = false;
+    if auto_decode_gamekit {
+        gamekit = gamekit::patch_to_lineage2(&mut plaintext);
+    }
+    Ok((plaintext, gamekit))
+}
+
 pub fn decrypt_aac_file(
     path: &Path,
     bytes: Vec<u8>,
@@ -18,13 +30,8 @@ pub fn decrypt_aac_file(
     output_root: &Path,
     auto_decode_gamekit: bool,
 ) -> Result<(PathBuf, bool)> {
-    let decrypted = aac::try_decrypt_with_keys(bytes, profiles)?;
+    let (plaintext, gamekit) = decrypt_aac_bytes(bytes, profiles, auto_decode_gamekit)?;
     let destination = output::mirrored_output_path(root, path, output_root);
-    let mut plaintext = decrypted.plaintext;
-    let mut gamekit = false;
-    if auto_decode_gamekit {
-        gamekit = gamekit::patch_to_lineage2(&mut plaintext);
-    }
     output::write_output(&destination, &plaintext)?;
     Ok((destination, gamekit))
 }

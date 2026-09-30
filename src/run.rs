@@ -54,59 +54,55 @@ fn file_name_fallback(path: &Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
-fn report_outcome(outcome: &BatchResult, output_root: &Path) {
-    println!();
+fn summarize_batch(outcome: &BatchResult) -> String {
     let total = outcome.decrypted_paths.len() + outcome.failures.len();
     if total == 1 {
         if outcome.failures.is_empty() {
             let name = file_name_fallback(&outcome.decrypted_paths[0]);
-            term::result_line(obfstr!("Result:"), &format!("{name} decrypted"));
-        } else {
-            let name = file_name_fallback(&outcome.failures[0].0);
-            let msg = if outcome.failures[0].1.is_key_mismatch() {
-                format!("{name} failed ({})", failure_detail(outcome))
-            } else {
-                format!("{name} failed")
-            };
-            term::result_line(obfstr!("Result:"), &msg);
+            return format!("{name} decrypted");
         }
-    } else if total == 2 && outcome.decrypted_paths.len() == 1 && outcome.failures.len() == 1 {
+        let name = file_name_fallback(&outcome.failures[0].0);
+        if outcome.failures[0].1.is_key_mismatch() {
+            return format!("{name} failed ({})", failure_detail(outcome));
+        }
+        return format!("{name} failed");
+    }
+    if total == 2 && outcome.decrypted_paths.len() == 1 && outcome.failures.len() == 1 {
         let ok_name = file_name_fallback(&outcome.decrypted_paths[0]);
         let fail_name = file_name_fallback(&outcome.failures[0].0);
-        let msg = if outcome.failures[0].1.is_key_mismatch() {
-            format!("{ok_name} decrypted, {fail_name} failed ({})", failure_detail(outcome))
-        } else {
-            format!("{ok_name} decrypted, {fail_name} failed")
-        };
-        term::result_line(obfstr!("Result:"), &msg);
-    } else if outcome.failures.is_empty() {
-        let decrypted_count = outcome.decrypted_paths.len();
-        let msg = if decrypted_count == 1 {
-            obfstr!("all 1 file decrypted").to_owned()
-        } else {
-            format!("all {decrypted_count} files decrypted")
-        };
-        term::result_line(obfstr!("Result:"), &msg);
-    } else if outcome.decrypted_paths.is_empty() {
-        term::result_line(
-            obfstr!("Result:"),
-            &format!(
-                "0 decrypted, {} failed ({})",
-                outcome.failures.len(),
+        if outcome.failures[0].1.is_key_mismatch() {
+            return format!(
+                "{ok_name} decrypted, {fail_name} failed ({})",
                 failure_detail(outcome)
-            ),
-        );
-    } else {
-        term::result_line(
-            obfstr!("Result:"),
-            &format!(
-                "{} decrypted, {} failed ({})",
-                outcome.decrypted_paths.len(),
-                outcome.failures.len(),
-                failure_detail(outcome),
-            ),
+            );
+        }
+        return format!("{ok_name} decrypted, {fail_name} failed");
+    }
+    if outcome.failures.is_empty() {
+        let decrypted_count = outcome.decrypted_paths.len();
+        if decrypted_count == 1 {
+            return obfstr!("all 1 file decrypted").to_owned();
+        }
+        return format!("all {decrypted_count} files decrypted");
+    }
+    if outcome.decrypted_paths.is_empty() {
+        return format!(
+            "0 decrypted, {} failed ({})",
+            outcome.failures.len(),
+            failure_detail(outcome)
         );
     }
+    format!(
+        "{} decrypted, {} failed ({})",
+        outcome.decrypted_paths.len(),
+        outcome.failures.len(),
+        failure_detail(outcome),
+    )
+}
+
+fn report_outcome(outcome: &BatchResult, output_root: &Path) {
+    println!();
+    term::result_line(obfstr!("Result:"), &summarize_batch(outcome));
     if !outcome.decrypted_paths.is_empty() {
         term::result_line(obfstr!("Clean files:"), &output_root.display().to_string());
     }
@@ -135,7 +131,6 @@ fn failure_detail(outcome: &BatchResult) -> String {
     parts.join("; ")
 }
 
-/// Parallel decrypt of every found container with one profile.
 fn decrypt_all_containers(
     files: &[scan::FoundContainer],
     rsa_profile: &aac::RsaProfile,
@@ -212,32 +207,27 @@ pub fn banner() {
     term::banner();
 }
 
-pub fn run_scan(picked: &Path, interactive: bool) {
-    let Some(layout) = resolve_from_client_dir(picked) else {
+fn resolve_layout_or_report(
+    picked: &Path,
+    interactive: bool,
+) -> Option<crate::client::ClientLayout> {
+    let layout = resolve_from_client_dir(picked);
+    if layout.is_none() {
         term::status_line(obfstr!("+ Client:"), &picked.display().to_string());
         term::error_line(obfstr!("I can't find the client here: expected system\\l2.exe..."));
         wait_before_exit(interactive);
-        return;
-    };
+    }
+    layout
+}
 
-    let root = layout.client_dir.as_std_path();
-    let system_dir = layout.system_dir.as_std_path();
-
-    term::status_line(obfstr!("+ Client:"), &root.display().to_string());
-
-    let config_path = output::executable_directory().join(obfstr!("config.ini"));
-    let proxy_dll_names = config::proxy_candidates(&config_path);
-    let auto_decode_gamekit =
-        layout.is_scryde() && config::scryde_gamekitdata_auto_decode(&config_path);
-
-    let mut acquired = match load_or_capture_key(
-        system_dir,
-        &layout.exe_name,
-        &proxy_dll_names,
-        PROXY_DLL,
-        CAPTURE_TIMEOUT,
-    ) {
-        Ok(captured_key) => captured_key,
+fn load_key_or_report(
+    system_dir: &Path,
+    exe_name: &str,
+    proxy_dll_names: &[String],
+    interactive: bool,
+) -> Option<crate::capture::acquire::CapturedKey> {
+    match load_or_capture_key(system_dir, exe_name, proxy_dll_names, PROXY_DLL, CAPTURE_TIMEOUT) {
+        Ok(captured_key) => Some(captured_key),
         Err(error) => {
             if error.is_elevation_required() {
                 term::status_line(
@@ -249,8 +239,32 @@ pub fn run_scan(picked: &Path, interactive: bool) {
                 term::status_line(obfstr!("+ Status:"), &format!("Key capture failed: {error}"));
             }
             wait_before_exit(interactive);
-            return;
+            None
         }
+    }
+}
+
+pub fn run_scan(picked: &Path, interactive: bool) {
+    let Some(layout) = resolve_layout_or_report(picked, interactive) else {
+        return;
+    };
+
+    let root = layout.client_dir.as_std_path();
+    let system_dir = layout.system_dir.as_std_path();
+
+    term::status_line(obfstr!("+ Client:"), &root.display().to_string());
+
+    let decoder_config =
+        config::load_decoder_config(&output::executable_directory().join(obfstr!("config.ini")));
+    let auto_decode_gamekit = layout.is_scryde() && decoder_config.auto_decode_gamekit;
+
+    let Some(acquired) = load_key_or_report(
+        system_dir,
+        &layout.exe_name,
+        &decoder_config.proxy_dll_names,
+        interactive,
+    ) else {
+        return;
     };
     match acquired.source {
         KeyOrigin::Cached => term::status_line(obfstr!("+ Key:"), obfstr!("from cache")),
@@ -259,6 +273,28 @@ pub fn run_scan(picked: &Path, interactive: bool) {
         }
     }
 
+    let Some(scan_result) = scan_tree_or_report(root, interactive) else {
+        return;
+    };
+
+    let output_root = output::new_run_output_dir();
+
+    let outcome = decrypt_with_live_retry(
+        &scan_result,
+        root,
+        &output_root,
+        auto_decode_gamekit,
+        system_dir,
+        &layout.exe_name,
+        &decoder_config.proxy_dll_names,
+        acquired,
+    );
+
+    report_outcome(&outcome, &output_root);
+    wait_before_exit(interactive);
+}
+
+fn scan_tree_or_report(root: &Path, interactive: bool) -> Option<scan::ScanResult> {
     let mut spinner = term::Spinner::new(obfstr!("scanning tree"));
     let result = scan::scan_tree(root, &mut |examined| spinner.tick_files(examined));
     spinner.finish();
@@ -272,52 +308,56 @@ pub fn run_scan(picked: &Path, interactive: bool) {
 
     if result.aac.is_empty() {
         wait_before_exit(interactive);
-        return;
+        return None;
     }
+    Some(result)
+}
 
-    let output_root = output::new_run_output_dir();
-
-    let mut outcome = decrypt_all_containers(
-        &result.aac,
+#[allow(clippy::too_many_arguments)]
+fn decrypt_with_live_retry(
+    scan_result: &scan::ScanResult,
+    root: &Path,
+    output_root: &Path,
+    auto_decode_gamekit: bool,
+    system_dir: &Path,
+    exe_name: &str,
+    proxy_dll_names: &[String],
+    mut acquired: crate::capture::acquire::CapturedKey,
+) -> BatchResult {
+    let outcome = decrypt_all_containers(
+        &scan_result.aac,
         &acquired.rsa_profile,
         root,
-        &output_root,
+        output_root,
         auto_decode_gamekit,
     );
 
-    if cached_key_failed_all(&outcome, acquired.source) {
-        term::error_line(obfstr!("Cached key failed for all files — retrying live capture..."));
-        cache::invalidate_cache(system_dir, &layout.exe_name);
-        if let Ok(live) = load_or_capture_key(
-            system_dir,
-            &layout.exe_name,
-            &proxy_dll_names,
-            PROXY_DLL,
-            CAPTURE_TIMEOUT,
-        ) {
-            match live.source {
-                KeyOrigin::Cached => {
-                    term::status_line(obfstr!("+ Key:"), obfstr!("from cache (retry)"))
-                }
-                KeyOrigin::Captured => {
-                    term::status_line(obfstr!("+ Key:"), obfstr!("captured live (retry)"))
-                }
-            }
-            acquired = live;
-            println!();
-            term::section_title(obfstr!("Retrying decoding with live key:"));
-            outcome = decrypt_all_containers(
-                &result.aac,
-                &acquired.rsa_profile,
-                root,
-                &output_root,
-                auto_decode_gamekit,
-            );
+    if !cached_key_failed_all(&outcome, acquired.source) {
+        return outcome;
+    }
+    term::error_line(obfstr!("Cached key failed for all files — retrying live capture..."));
+    cache::invalidate_cache(system_dir, exe_name);
+    let Ok(live) =
+        load_or_capture_key(system_dir, exe_name, proxy_dll_names, PROXY_DLL, CAPTURE_TIMEOUT)
+    else {
+        return outcome;
+    };
+    match live.source {
+        KeyOrigin::Cached => term::status_line(obfstr!("+ Key:"), obfstr!("from cache (retry)")),
+        KeyOrigin::Captured => {
+            term::status_line(obfstr!("+ Key:"), obfstr!("captured live (retry)"))
         }
     }
-
-    report_outcome(&outcome, &output_root);
-    wait_before_exit(interactive);
+    acquired = live;
+    println!();
+    term::section_title(obfstr!("Retrying decoding with live key:"));
+    decrypt_all_containers(
+        &scan_result.aac,
+        &acquired.rsa_profile,
+        root,
+        output_root,
+        auto_decode_gamekit,
+    )
 }
 
 fn decode_dropped_file(path: &Path, name: &str, output_root: &Path) -> Result<PathBuf> {

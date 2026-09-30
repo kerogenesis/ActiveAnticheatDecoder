@@ -69,23 +69,36 @@ fn candidates_from(configured: Option<String>) -> Vec<String> {
     names
 }
 
-pub fn proxy_candidates(config_path: &Path) -> Vec<String> {
-    let configured = read_config(config_path)
-        .and_then(|text| parse_ini_key(&text, obfstr!("proxy_name")))
-        .unwrap_or_else(|| obfstr!("ddraw.dll").to_owned());
-    candidates_from(Some(configured))
+pub struct DecoderConfig {
+    pub proxy_dll_names: Vec<String>,
+    pub auto_decode_gamekit: bool,
 }
 
-pub fn scryde_gamekitdata_auto_decode(config_path: &Path) -> bool {
-    read_config(config_path)
-        .and_then(|text| parse_ini_key(&text, obfstr!("scryde_gamekitdata_auto_decode")))
-        .map(|raw_value| {
+pub fn load_decoder_config(config_path: &Path) -> DecoderConfig {
+    let text = read_config(config_path);
+    let proxy_dll_names = candidates_from(
+        text.as_ref()
+            .and_then(|text| parse_ini_key(text, obfstr!("proxy_name")))
+            .or_else(|| Some(obfstr!("ddraw.dll").to_owned())),
+    );
+    let auto_decode_gamekit = text
+        .as_ref()
+        .and_then(|text| parse_ini_key(text, obfstr!("scryde_gamekitdata_auto_decode")))
+        .is_none_or(|raw_value| {
             !matches!(
                 raw_value.trim().to_lowercase().as_str(),
                 "false" | "0" | "no" | "n" | "off" | "disable" | "disabled"
             )
-        })
-        .unwrap_or(true)
+        });
+    DecoderConfig { proxy_dll_names, auto_decode_gamekit }
+}
+
+pub fn proxy_candidates(config_path: &Path) -> Vec<String> {
+    load_decoder_config(config_path).proxy_dll_names
+}
+
+pub fn scryde_gamekitdata_auto_decode(config_path: &Path) -> bool {
+    load_decoder_config(config_path).auto_decode_gamekit
 }
 
 #[cfg(test)]

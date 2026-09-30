@@ -47,43 +47,54 @@ fn fill_chunk(file: &mut std::fs::File, buf: &mut [u8]) -> usize {
 }
 
 pub fn cache_key(system_dir: &Path, exe_name: &str) -> String {
+    if let Some(hash) = hash_clmods(system_dir) {
+        return hash;
+    }
+    if let Some(hash) = hash_client_exe(system_dir, exe_name) {
+        return hash;
+    }
+    hash_dir_listing(system_dir).unwrap_or_else(|| obfstr!("unknown").to_owned())
+}
+
+fn hash_clmods(system_dir: &Path) -> Option<String> {
     let clmods = system_dir.join(obfstr!("clmods.dll"));
-    if let Some(h) = hash_file(&clmods) {
-        return h;
-    }
+    hash_file(&clmods)
+}
+
+fn hash_client_exe(system_dir: &Path, exe_name: &str) -> Option<String> {
     let client = system_dir.join(exe_name);
-    if let Ok(mut file) = std::fs::File::open(&client) {
-        let mut buf = vec![0u8; 64 * 1024];
-        let mut hasher = Sha1::new();
-        let mut any = false;
-        while let Ok(bytes_read) = file.read(&mut buf) {
-            if bytes_read == 0 {
-                break;
-            }
-            hasher.update(&buf[..bytes_read]);
-            any = true;
+    let mut file = std::fs::File::open(&client).ok()?;
+    let mut buf = vec![0u8; 64 * 1024];
+    let mut hasher = Sha1::new();
+    let mut any = false;
+    while let Ok(bytes_read) = file.read(&mut buf) {
+        if bytes_read == 0 {
+            break;
         }
-        if any {
-            let digest = hasher.finalize();
-            return to_hex(&digest);
-        }
+        hasher.update(&buf[..bytes_read]);
+        any = true;
     }
-    // fallback: SHA-1 of sorted file names
-    if let Ok(entries) = std::fs::read_dir(system_dir) {
-        let mut names: Vec<String> = entries
-            .filter_map(|entry| entry.ok())
-            .map(|entry| entry.file_name().to_string_lossy().to_string())
-            .collect();
-        names.sort();
-        let mut hasher = Sha1::new();
-        for name in &names {
-            hasher.update(name.as_bytes());
-            hasher.update(b"\0");
-        }
-        let digest = hasher.finalize();
-        return to_hex(&digest);
+    if !any {
+        return None;
     }
-    "unknown".to_owned()
+    let digest = hasher.finalize();
+    Some(to_hex(&digest))
+}
+
+fn hash_dir_listing(system_dir: &Path) -> Option<String> {
+    let entries = std::fs::read_dir(system_dir).ok()?;
+    let mut names: Vec<String> = entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().to_string())
+        .collect();
+    names.sort();
+    let mut hasher = Sha1::new();
+    for name in &names {
+        hasher.update(name.as_bytes());
+        hasher.update(b"\0");
+    }
+    let digest = hasher.finalize();
+    Some(to_hex(&digest))
 }
 
 fn cache_dir() -> std::path::PathBuf {
