@@ -10,7 +10,7 @@ use std::time::Duration;
 use crate::capture::acquire::{AcquireSource, acquire_profile};
 use crate::client::{config, resolve_client_layout};
 use crate::error::{Error, IoAction, Result};
-use crate::format::{aac, decode as fmt_decode, manifest};
+use crate::format::{aac, manifest, pipeline as fmt_decode};
 use crate::storage::{cache, output, scan};
 use crate::system::term;
 
@@ -27,10 +27,27 @@ struct Outcome {
 
 type DecodeOutcome = (PathBuf, String, Result<(PathBuf, bool)>);
 type DecodeMessage = (usize, DecodeOutcome);
-type PendingDecode = BTreeMap<usize, DecodeOutcome>;
 type DroppedOutcome = (PathBuf, String, Result<PathBuf>);
 type DroppedMessage = (usize, DroppedOutcome);
-type PendingDropped = BTreeMap<usize, DroppedOutcome>;
+
+fn drain_ordered<T>(
+    count: usize,
+    rx: &std::sync::mpsc::Receiver<(usize, T)>,
+    mut on_item: impl FnMut(usize, usize, T),
+) {
+    let mut pending: BTreeMap<usize, T> = BTreeMap::new();
+    let mut next = 0usize;
+    while next < count {
+        let Ok((idx, item)) = rx.recv() else {
+            break;
+        };
+        pending.insert(idx, item);
+        while let Some(item) = pending.remove(&next) {
+            on_item(next + 1, count, item);
+            next += 1;
+        }
+    }
+}
 
 fn short_name(path: &Path) -> String {
     path.file_name()
@@ -149,15 +166,11 @@ fn decode_all(
             });
         });
 
-        let mut pending: PendingDecode = BTreeMap::new();
         let mut outcome = Outcome::default();
-        let mut next = 0usize;
-        while next < files.len() {
-            let Ok((idx, (source, target_rel, decoded))) = rx.recv() else {
-                break;
-            };
-            pending.insert(idx, (source, target_rel, decoded));
-            while let Some((source, target_rel, decoded)) = pending.remove(&next) {
+        drain_ordered(
+            files.len(),
+            &rx,
+            |index, total, (source, target_rel, decoded): DecodeOutcome| {
                 let (is_ok, label, err_str) = match &decoded {
                     Ok((_, gamekit)) => {
                         let label = if *gamekit {
@@ -172,14 +185,13 @@ fn decode_all(
                         (false, target_rel.clone(), reason)
                     }
                 };
-                term::step_result(next + 1, files.len(), &label, is_ok, err_str.as_deref());
+                term::step_result(index, total, &label, is_ok, err_str.as_deref());
                 match decoded {
                     Ok((destination, _)) => outcome.clean_paths.push(destination),
                     Err(error) => outcome.failures.push((source, error)),
                 }
-                next += 1;
-            }
-        }
+            },
+        );
         outcome
     })
 }
@@ -329,27 +341,16 @@ pub fn run_dropped_files(paths: &[PathBuf]) {
             });
         });
 
-        let mut pending: PendingDropped = BTreeMap::new();
         let mut outcome = Outcome::default();
-        let mut next = 0usize;
-        while next < paths.len() {
-            let Ok((idx, (path, name, decoded))) = rx.recv() else {
-                break;
-            };
-            pending.insert(idx, (path, name, decoded));
-            while let Some((path, name, decoded)) = pending.remove(&next) {
-                let is_ok = decoded.is_ok();
-                let err_str = decoded.as_ref().err().map(|e| e.to_string());
-
-                term::step_result(next + 1, paths.len(), &name, is_ok, err_str.as_deref());
-
-                match decoded {
-                    Ok(destination) => outcome.clean_paths.push(destination),
-                    Err(error) => outcome.failures.push((path, error)),
-                }
-                next += 1;
+        drain_ordered(paths.len(), &rx, |index, total, (path, name, decoded): DroppedOutcome| {
+            let is_ok = decoded.is_ok();
+            let err_str = decoded.as_ref().err().map(|e| e.to_string());
+            term::step_result(index, total, &name, is_ok, err_str.as_deref());
+            match decoded {
+                Ok(destination) => outcome.clean_paths.push(destination),
+                Err(error) => outcome.failures.push((path, error)),
             }
-        }
+        });
         outcome
     });
 

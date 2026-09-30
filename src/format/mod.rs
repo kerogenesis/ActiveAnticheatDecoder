@@ -1,7 +1,7 @@
 pub mod aac;
-pub mod decode;
 pub mod gamekit;
 pub mod manifest;
+pub mod pipeline;
 
 pub use aac::{
     Decoded, PAYLOAD_OFFSET, RSA_BLOCK_LEN, RSA_BLOCK_OFFSET, RsaProfile, decode_with_profiles,
