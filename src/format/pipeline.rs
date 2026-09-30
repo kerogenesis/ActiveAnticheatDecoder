@@ -10,7 +10,7 @@ use crate::storage::output;
 
 /// AAC -> RC4 -> optional `Gamekit` to `Lineage2Ver` -> write to mirrored path.
 /// Returns the destination plus whether Gamekit conversion applied.
-pub fn decode_aac_file(
+pub fn decrypt_aac_file(
     path: &Path,
     bytes: Vec<u8>,
     profiles: &[aac::RsaProfile],
@@ -18,9 +18,9 @@ pub fn decode_aac_file(
     output_root: &Path,
     auto_decode_gamekit: bool,
 ) -> Result<(PathBuf, bool)> {
-    let decoded = aac::decode_with_profiles(bytes, profiles)?;
-    let destination = output::mirrored_path(root, path, output_root);
-    let mut plaintext = decoded.plaintext;
+    let decrypted = aac::try_decrypt_with_keys(bytes, profiles)?;
+    let destination = output::mirrored_output_path(root, path, output_root);
+    let mut plaintext = decrypted.plaintext;
     let mut gamekit = false;
     if auto_decode_gamekit {
         gamekit = gamekit::patch_to_lineage2(&mut plaintext);
@@ -30,14 +30,14 @@ pub fn decode_aac_file(
 }
 
 /// Hash manifest `ft_*` -> RC4 -> manifest text -> write with `_clean.txt` suffix.
-pub fn decode_hash_manifest_file(
+pub fn decrypt_hash_manifest_file(
     path: &Path,
     bytes: &[u8],
     root: &Path,
     output_root: &Path,
 ) -> Result<PathBuf> {
-    let text = manifest::decode_manifest(bytes)?;
-    let destination = output::output_path_for(root, path, output_root, obfstr!("_clean.txt"));
+    let text = manifest::decrypt_manifest_text(bytes)?;
+    let destination = output::manifest_output_path(root, path, output_root, obfstr!("_clean.txt"));
     output::write_output(&destination, text.as_bytes())?;
     Ok(destination)
 }

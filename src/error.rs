@@ -80,7 +80,7 @@ pub enum Error {
     UnexpectedRsaMessageLen { got: usize },
 
     #[error("decode failed:\n  {}", join_failures(failures))]
-    DecodeFailed { failures: Vec<DecodeFailure> },
+    DecodeAttemptsFailed { failures: Vec<PerKeyFailure> },
 
     #[error("EOF reading {what}")]
     ManifestEof { what: &'static str },
@@ -117,7 +117,7 @@ impl Error {
 
     pub fn is_key_mismatch(&self) -> bool {
         match self {
-            Self::DecodeFailed { failures } => {
+            Self::DecodeAttemptsFailed { failures } => {
                 !failures.is_empty()
                     && failures
                         .iter()
@@ -129,18 +129,18 @@ impl Error {
 }
 
 #[derive(Debug)]
-pub struct DecodeFailure {
-    pub profile: String,
+pub struct PerKeyFailure {
+    pub key_origin: String,
     pub error: Error,
 }
 
-impl std::fmt::Display for DecodeFailure {
+impl std::fmt::Display for PerKeyFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}: {}", self.profile, self.error)
+        write!(f, "{}: {}", self.key_origin, self.error)
     }
 }
 
-fn join_failures(failures: &[DecodeFailure]) -> String {
+fn join_failures(failures: &[PerKeyFailure]) -> String {
     failures.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n  ")
 }
 
@@ -150,11 +150,11 @@ mod tests {
 
     #[test]
     fn key_mismatch_detects_padding_failures_only() {
-        let mismatch = Error::DecodeFailed {
+        let mismatch = Error::DecodeAttemptsFailed {
             failures: vec![
-                DecodeFailure { profile: "cache".to_owned(), error: Error::Pkcs1PaddingInvalid },
-                DecodeFailure {
-                    profile: "client memory".to_owned(),
+                PerKeyFailure { key_origin: "cache".to_owned(), error: Error::Pkcs1PaddingInvalid },
+                PerKeyFailure {
+                    key_origin: "client memory".to_owned(),
                     error: Error::Pkcs1PaddingInvalid,
                 },
             ],
@@ -164,9 +164,9 @@ mod tests {
             mismatch.to_string(),
             "decode failed:\n  cache: PKCS#1 padding invalid (this key does not match the file)\n  client memory: PKCS#1 padding invalid (this key does not match the file)"
         );
-        let other = Error::DecodeFailed {
-            failures: vec![DecodeFailure {
-                profile: "cache".to_owned(),
+        let other = Error::DecodeAttemptsFailed {
+            failures: vec![PerKeyFailure {
+                key_origin: "cache".to_owned(),
                 error: Error::CiphertextOutOfRange,
             }],
         };

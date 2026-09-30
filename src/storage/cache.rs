@@ -46,42 +46,42 @@ fn fill_chunk(file: &mut std::fs::File, buf: &mut [u8]) -> usize {
     filled
 }
 
-pub fn cache_key(system_dir: &Path, client_exe: &str) -> String {
+pub fn cache_key(system_dir: &Path, exe_name: &str) -> String {
     let clmods = system_dir.join(obfstr!("clmods.dll"));
     if let Some(h) = hash_file(&clmods) {
         return h;
     }
-    let client = system_dir.join(client_exe);
+    let client = system_dir.join(exe_name);
     if let Ok(mut file) = std::fs::File::open(&client) {
         let mut buf = vec![0u8; 64 * 1024];
         let mut hasher = Sha1::new();
         let mut any = false;
-        while let Ok(n) = file.read(&mut buf) {
-            if n == 0 {
+        while let Ok(bytes_read) = file.read(&mut buf) {
+            if bytes_read == 0 {
                 break;
             }
-            hasher.update(&buf[..n]);
+            hasher.update(&buf[..bytes_read]);
             any = true;
         }
         if any {
-            let d = hasher.finalize();
-            return to_hex(&d);
+            let digest = hasher.finalize();
+            return to_hex(&digest);
         }
     }
     // fallback: SHA-1 of sorted file names
     if let Ok(entries) = std::fs::read_dir(system_dir) {
         let mut names: Vec<String> = entries
-            .filter_map(|e| e.ok())
-            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
             .collect();
         names.sort();
         let mut hasher = Sha1::new();
-        for n in &names {
-            hasher.update(n.as_bytes());
+        for name in &names {
+            hasher.update(name.as_bytes());
             hasher.update(b"\0");
         }
-        let d = hasher.finalize();
-        return to_hex(&d);
+        let digest = hasher.finalize();
+        return to_hex(&digest);
     }
     "unknown".to_owned()
 }
@@ -96,37 +96,37 @@ fn cache_path(key: &str) -> std::path::PathBuf {
     dir.join(format!("rsa_{key}.bin"))
 }
 
-pub fn load_cached_profile(system_dir: &Path, client_exe: &str) -> Option<aac::RsaProfile> {
-    let key = cache_key(system_dir, client_exe);
+pub fn load_cached_profile(system_dir: &Path, exe_name: &str) -> Option<aac::RsaProfile> {
+    let key = cache_key(system_dir, exe_name);
     let path = cache_path(&key);
     let bytes = std::fs::read(&path).ok()?;
     // format: N_LE hex \n D_LE hex \n
     let text = String::from_utf8_lossy(&bytes);
     let mut lines = text.lines();
-    let n_hex = lines.next()?.trim();
-    let d_hex = lines.next()?.trim();
-    if n_hex.is_empty() || d_hex.is_empty() {
+    let modulus_hex = lines.next()?.trim();
+    let exponent_hex = lines.next()?.trim();
+    if modulus_hex.is_empty() || exponent_hex.is_empty() {
         return None;
     }
-    let n_le = hex_to_bytes(n_hex)?;
-    let d_le = hex_to_bytes(d_hex)?;
-    aac::RsaProfile::from_le_components(obfstr!("cache"), &n_le, &d_le).ok()
+    let modulus_le = hex_to_bytes(modulus_hex)?;
+    let exponent_le = hex_to_bytes(exponent_hex)?;
+    aac::RsaProfile::from_le_components(obfstr!("cache"), &modulus_le, &exponent_le).ok()
 }
 
-pub fn save_cached_profile(system_dir: &Path, client_exe: &str, profile: &aac::RsaProfile) {
-    let key = cache_key(system_dir, client_exe);
+pub fn save_cached_profile(system_dir: &Path, exe_name: &str, rsa_profile: &aac::RsaProfile) {
+    let key = cache_key(system_dir, exe_name);
     let path = cache_path(&key);
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let n_le_hex = to_hex(&profile.modulus.to_bytes_le());
-    let d_le_hex = to_hex(&profile.private_exponent.to_bytes_le());
+    let n_le_hex = to_hex(&rsa_profile.modulus.to_bytes_le());
+    let d_le_hex = to_hex(&rsa_profile.private_exponent.to_bytes_le());
     let content = format!("{n_le_hex}\n{d_le_hex}\n");
     let _ = std::fs::write(&path, content.as_bytes());
 }
 
-pub fn invalidate_cache(system_dir: &Path, client_exe: &str) {
-    let key = cache_key(system_dir, client_exe);
+pub fn invalidate_cache(system_dir: &Path, exe_name: &str) {
+    let key = cache_key(system_dir, exe_name);
     let path = cache_path(&key);
     let _ = std::fs::remove_file(path);
 }
@@ -163,7 +163,7 @@ mod tests {
         let loaded = load_cached_profile(&dir, "l2.exe").expect("saved profile must load back");
         assert_eq!(loaded.modulus, profile.modulus);
         assert_eq!(loaded.private_exponent, profile.private_exponent);
-        assert_eq!(loaded.source, "cache");
+        assert_eq!(loaded.origin, "cache");
         invalidate_cache(&dir, "l2.exe");
         assert!(load_cached_profile(&dir, "l2.exe").is_none());
         let _ = std::fs::remove_dir(&dir);

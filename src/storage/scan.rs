@@ -29,7 +29,7 @@ pub fn scan_tree(root: &Path, on_progress: &mut dyn FnMut(usize)) -> ScanResult 
     {
         if entry.file_type().is_file() {
             files_examined += 1;
-            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            let size = entry.metadata().map(|metadata| metadata.len()).unwrap_or(0);
             all_files.push((entry.path().to_path_buf(), size));
             on_progress(files_examined);
         }

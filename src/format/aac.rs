@@ -1,7 +1,7 @@
 //! ActiveAnticheatCrypt container decoding.
 
 use crate::crypto::{hex::hex_to_bytes, rc4};
-use crate::error::{DecodeFailure, Error, Result};
+use crate::error::{Error, PerKeyFailure, Result};
 use num_bigint::BigUint;
 use obfstr::{obfbytes, obfstr};
 
@@ -20,23 +20,23 @@ pub fn is_aac_container(bytes: &[u8]) -> bool {
 
 #[derive(Clone)]
 pub struct RsaProfile {
-    pub source: String,
+    pub origin: String,
     pub modulus: BigUint,
     pub private_exponent: BigUint,
 }
 
 impl RsaProfile {
-    pub fn from_le_components(source: &str, n_le: &[u8], d_le: &[u8]) -> Result<Self> {
-        let modulus = BigUint::from_bytes_le(n_le);
+    pub fn from_le_components(origin: &str, modulus_le: &[u8], exponent_le: &[u8]) -> Result<Self> {
+        let modulus = BigUint::from_bytes_le(modulus_le);
         if modulus.bits() == 0 || !modulus.bit(0) {
             return Err(Error::InvalidModulus);
         }
-        let private_exponent = BigUint::from_bytes_le(d_le);
-        Ok(Self { source: source.to_owned(), modulus, private_exponent })
+        let private_exponent = BigUint::from_bytes_le(exponent_le);
+        Ok(Self { origin: origin.to_owned(), modulus, private_exponent })
     }
 }
 
-fn find_component(text: &str, name: &str) -> Option<Vec<u8>> {
+fn find_hex_component(text: &str, name: &str) -> Option<Vec<u8>> {
     let needle = format!("{name}{}", obfstr!("_LE="));
     let start = text.find(&needle)? + needle.len();
     let rest = &text[start..];
@@ -44,12 +44,12 @@ fn find_component(text: &str, name: &str) -> Option<Vec<u8>> {
     hex_to_bytes(&rest[..end])
 }
 
-pub fn parse_rsa_log(text: &str, source: &str) -> Result<RsaProfile> {
-    let n_le =
-        find_component(text, obfstr!("N")).ok_or(Error::MissingKeyComponent { name: "N_LE" })?;
-    let d_le =
-        find_component(text, obfstr!("D")).ok_or(Error::MissingKeyComponent { name: "D_LE" })?;
-    RsaProfile::from_le_components(source, &n_le, &d_le)
+pub fn parse_rsa_log(text: &str, origin: &str) -> Result<RsaProfile> {
+    let modulus_le = find_hex_component(text, obfstr!("N"))
+        .ok_or(Error::MissingKeyComponent { name: "N_LE" })?;
+    let exponent_le = find_hex_component(text, obfstr!("D"))
+        .ok_or(Error::MissingKeyComponent { name: "D_LE" })?;
+    RsaProfile::from_le_components(origin, &modulus_le, &exponent_le)
 }
 
 fn pkcs1_v15_type2_unpad(block: &[u8]) -> Option<&[u8]> {
@@ -107,7 +107,7 @@ fn rc4_key_for_file(file_bytes: &[u8], profile: &RsaProfile) -> Result<Vec<u8>> 
     }
 }
 
-pub fn decode_with_profiles(mut file_bytes: Vec<u8>, profiles: &[RsaProfile]) -> Result<Decoded> {
+pub fn try_decrypt_with_keys(mut file_bytes: Vec<u8>, profiles: &[RsaProfile]) -> Result<Decoded> {
     let mut failures = Vec::new();
     for profile in profiles {
         match rc4_key_for_file(&file_bytes, profile) {
@@ -116,10 +116,12 @@ pub fn decode_with_profiles(mut file_bytes: Vec<u8>, profiles: &[RsaProfile]) ->
                 rc4::crypt_in_place(&mut file_bytes, &rc4_key);
                 return Ok(Decoded { plaintext: file_bytes });
             }
-            Err(error) => failures.push(DecodeFailure { profile: profile.source.clone(), error }),
+            Err(error) => {
+                failures.push(PerKeyFailure { key_origin: profile.origin.clone(), error });
+            }
         }
     }
-    Err(Error::DecodeFailed { failures })
+    Err(Error::DecodeAttemptsFailed { failures })
 }
 
 #[cfg(test)]
@@ -146,7 +148,7 @@ mod tests {
     fn parses_little_endian_components() {
         let text = "N_LE=0100\nD_LE=0300\n";
         let profile = parse_rsa_log(text, "test").unwrap();
-        assert_eq!(profile.source, "test");
+        assert_eq!(profile.origin, "test");
         assert_eq!(profile.private_exponent, BigUint::from(3u32));
         assert_ne!(profile.modulus, BigUint::default());
     }

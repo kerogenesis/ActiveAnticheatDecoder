@@ -53,51 +53,51 @@ impl<'a> Cursor<'a> {
         self.data.len() - self.offset
     }
 
-    fn take(&mut self, count: usize, what: &'static str) -> Result<&'a [u8]> {
-        let end = self.offset.checked_add(count).ok_or(Error::ManifestEof { what })?;
-        let slice = self.data.get(self.offset..end).ok_or(Error::ManifestEof { what })?;
+    fn read_bytes(&mut self, count: usize, field: &'static str) -> Result<&'a [u8]> {
+        let end = self.offset.checked_add(count).ok_or(Error::ManifestEof { what: field })?;
+        let slice = self.data.get(self.offset..end).ok_or(Error::ManifestEof { what: field })?;
         self.offset = end;
         Ok(slice)
     }
 
-    fn u32(&mut self, what: &'static str) -> Result<u32> {
-        let bytes = self.take(4, what)?;
-        let array: [u8; 4] = bytes.try_into().map_err(|_| Error::ManifestEof { what })?;
+    fn read_u32_le(&mut self, field: &'static str) -> Result<u32> {
+        let bytes = self.read_bytes(4, field)?;
+        let array: [u8; 4] = bytes.try_into().map_err(|_| Error::ManifestEof { what: field })?;
         Ok(u32::from_le_bytes(array))
     }
 
-    fn u16(&mut self, what: &'static str) -> Result<u16> {
-        let bytes = self.take(2, what)?;
-        let array: [u8; 2] = bytes.try_into().map_err(|_| Error::ManifestEof { what })?;
+    fn read_u16_le(&mut self, field: &'static str) -> Result<u16> {
+        let bytes = self.read_bytes(2, field)?;
+        let array: [u8; 2] = bytes.try_into().map_err(|_| Error::ManifestEof { what: field })?;
         Ok(u16::from_le_bytes(array))
     }
 }
 
-pub fn parse(data: &[u8]) -> Result<Manifest> {
+pub fn parse_manifest_binary(data: &[u8]) -> Result<Manifest> {
     let mut cursor = Cursor::new(data);
-    let file_count = cursor.u32("file count")? as usize;
+    let file_count = cursor.read_u32_le("file count")? as usize;
     if file_count.saturating_mul(MIN_RECORD_SIZE) > data.len() {
         return Err(Error::ManifestFileCount);
     }
     let mut records = Vec::with_capacity(file_count);
     for _ in 0..file_count {
-        let id = cursor.u32("record id")?;
-        let kind = cursor.u32("record kind")?;
-        let path_length = cursor.u32("path length")? as usize;
+        let id = cursor.read_u32_le("record id")?;
+        let kind = cursor.read_u32_le("record kind")?;
+        let path_length = cursor.read_u32_le("path length")? as usize;
         if path_length > cursor.remaining() {
             return Err(Error::ManifestPathLength);
         }
-        let path_bytes = cursor.take(path_length, "path")?;
+        let path_bytes = cursor.read_bytes(path_length, "path")?;
         let path = String::from_utf8_lossy(path_bytes).into_owned();
-        let flags = cursor.u32("flags")?;
-        let digest_count = cursor.u32("digest count")? as usize;
+        let flags = cursor.read_u32_le("flags")?;
+        let digest_count = cursor.read_u32_le("digest count")? as usize;
         if digest_count.saturating_mul(2) > cursor.remaining() {
             return Err(Error::ManifestDigestCount);
         }
         let mut digests = Vec::with_capacity(digest_count);
         for _ in 0..digest_count {
-            let length = cursor.u16("digest length")? as usize;
-            digests.push(cursor.take(length, "digest")?.to_vec());
+            let length = cursor.read_u16_le("digest length")? as usize;
+            digests.push(cursor.read_bytes(length, "digest")?.to_vec());
         }
         records.push(Record { id, kind, path, flags, digests });
     }
@@ -107,7 +107,7 @@ pub fn parse(data: &[u8]) -> Result<Manifest> {
     Ok(Manifest { records })
 }
 
-pub fn format_manifest(manifest: &Manifest) -> String {
+pub fn render_manifest_text(manifest: &Manifest) -> String {
     let mut text = String::new();
     let _ = writeln!(text, "files: {}", manifest.records.len());
     for record in &manifest.records {
@@ -123,10 +123,10 @@ pub fn format_manifest(manifest: &Manifest) -> String {
     text
 }
 
-pub fn decode_manifest(file_bytes: &[u8]) -> Result<String> {
+pub fn decrypt_manifest_text(file_bytes: &[u8]) -> Result<String> {
     let plain = rc4::crypt(file_bytes, &hash_manifest_key());
-    let manifest = parse(&plain)?;
-    Ok(format_manifest(&manifest))
+    let manifest = parse_manifest_binary(&plain)?;
+    Ok(render_manifest_text(&manifest))
 }
 
 #[cfg(test)]
@@ -159,7 +159,7 @@ mod tests {
         assert!(is_hash_manifest_name("ft_1223859.dat"));
     }
 
-    fn build_manifest() -> Vec<u8> {
+    fn build_manifest_binary() -> Vec<u8> {
         let mut data = Vec::new();
         data.extend_from_slice(&1u32.to_le_bytes());
         data.extend_from_slice(&7u32.to_le_bytes());
@@ -176,7 +176,7 @@ mod tests {
 
     #[test]
     fn parses_a_well_formed_manifest() {
-        let manifest = parse(&build_manifest()).unwrap();
+        let manifest = parse_manifest_binary(&build_manifest_binary()).unwrap();
         assert_eq!(manifest.records.len(), 1);
         assert_eq!(manifest.records[0].path, "system/l2.exe");
         assert_eq!(manifest.records[0].digests[0], vec![0xAB, 0xCD]);
@@ -184,21 +184,21 @@ mod tests {
 
     #[test]
     fn round_trips_through_rc4() {
-        let encrypted = rc4::crypt(&build_manifest(), &hash_manifest_key());
-        let text = decode_manifest(&encrypted).unwrap();
+        let encrypted = rc4::crypt(&build_manifest_binary(), &hash_manifest_key());
+        let text = decrypt_manifest_text(&encrypted).unwrap();
         assert!(text.contains("system/l2.exe"));
     }
 
     #[test]
     fn rejects_garbage_instead_of_allocating() {
         let garbage = vec![0xFFu8; 64];
-        assert!(parse(&garbage).is_err());
+        assert!(parse_manifest_binary(&garbage).is_err());
     }
 
     #[test]
     fn rejects_trailing_bytes() {
-        let mut data = build_manifest();
+        let mut data = build_manifest_binary();
         data.push(0);
-        assert!(parse(&data).is_err());
+        assert!(parse_manifest_binary(&data).is_err());
     }
 }

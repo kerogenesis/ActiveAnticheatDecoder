@@ -5,8 +5,8 @@ pub mod scan;
 use std::path::Path;
 
 pub use output::{
-    executable_directory, hash_manifest_name, is_hash_manifest_path, mirrored_path,
-    output_path_for, output_root, relative, write_output,
+    executable_directory, hash_manifest_name, is_hash_manifest_path, manifest_output_path,
+    mirrored_output_path, new_run_output_dir, relative_display, write_output,
 };
 pub use scan::{FoundContainer, ScanResult, scan_tree};
 

@@ -105,7 +105,7 @@ fn now_millis() -> u128 {
 
 pub fn capture_key(
     system_dir: &Path,
-    client_exe: &str,
+    exe_name: &str,
     candidates: &[String],
     dll_bytes: &[u8],
     timeout: Duration,
@@ -117,10 +117,10 @@ pub fn capture_key(
     if !system_dir.is_dir() {
         return Err(Error::NoSystemFolder { path: system_dir.to_path_buf() });
     }
-    let client = system_dir.join(client_exe);
+    let client = system_dir.join(exe_name);
     if !client.is_file() {
         return Err(Error::NoClientExe {
-            exe: client_exe.to_owned(),
+            exe: exe_name.to_owned(),
             directory: system_dir.to_path_buf(),
         });
     }
@@ -311,11 +311,11 @@ fn capture(
     unsafe {
         ResumeThread(main_thread.as_raw());
     }
-    let captured = await_key(&rx, timeout, on_wait);
+    let key_bytes = await_key(&rx, timeout, on_wait);
     terminate_client(&process);
-    let data = captured.filter(|bytes| !bytes.is_empty()).ok_or(Error::CaptureTimeout)?;
-    noise::stir((data.len() as u32) ^ 0xAADE_C0DE);
-    let text = String::from_utf8_lossy(&data);
+    let key_bytes = key_bytes.filter(|bytes| !bytes.is_empty()).ok_or(Error::CaptureTimeout)?;
+    noise::stir((key_bytes.len() as u32) ^ 0xAADE_C0DE);
+    let text = String::from_utf8_lossy(&key_bytes);
     aac::parse_rsa_log(&text, obfstr!("client memory"))
 }
 
@@ -375,17 +375,17 @@ mod tests {
         dir
     }
 
-    fn candidates() -> Vec<String> {
+    fn proxy_dll_names() -> Vec<String> {
         vec!["ddraw.dll".to_owned(), "d3d9.dll".to_owned(), "xinput1_4.dll".to_owned()]
     }
 
     #[test]
     fn plants_first_free_name() {
         let dir = scratch_dir("free");
-        let planted = write_proxy(&dir, &candidates(), b"proxy").expect("plant");
+        let planted = write_proxy(&dir, &proxy_dll_names(), b"proxy").expect("plant proxy");
         assert_eq!(planted.path, dir.join("ddraw.dll"));
         assert!(planted.backup.is_none());
-        assert_eq!(std::fs::read(&planted.path).expect("read"), b"proxy");
+        assert_eq!(std::fs::read(&planted.path).expect("read back planted dll"), b"proxy");
         remove_proxy(&planted);
         assert!(!planted.path.exists());
         std::fs::remove_dir_all(&dir).ok();
@@ -394,17 +394,17 @@ mod tests {
     #[test]
     fn replaces_first_name_with_backup_when_all_taken() {
         let dir = scratch_dir("taken");
-        for name in candidates() {
-            std::fs::write(dir.join(&name), b"original").expect("seed");
+        for name in proxy_dll_names() {
+            std::fs::write(dir.join(&name), b"original").expect("seed original dll");
         }
-        let planted = write_proxy(&dir, &candidates(), b"proxy").expect("plant");
+        let planted = write_proxy(&dir, &proxy_dll_names(), b"proxy").expect("plant proxy");
         assert_eq!(planted.path, dir.join("ddraw.dll"));
         let backup = planted.backup.clone().expect("backup recorded");
         assert_eq!(backup, dir.join("_ddraw.dll"));
-        assert_eq!(std::fs::read(&planted.path).expect("read"), b"proxy");
-        assert_eq!(std::fs::read(&backup).expect("read"), b"original");
+        assert_eq!(std::fs::read(&planted.path).expect("read back planted dll"), b"proxy");
+        assert_eq!(std::fs::read(&backup).expect("read back original dll"), b"original");
         remove_proxy(&planted);
-        assert_eq!(std::fs::read(&planted.path).expect("read"), b"original");
+        assert_eq!(std::fs::read(&planted.path).expect("read back restored dll"), b"original");
         assert!(!backup.exists());
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -412,30 +412,30 @@ mod tests {
     #[test]
     fn heals_own_leftover_from_a_killed_run() {
         let dir = scratch_dir("stale");
-        for name in candidates() {
-            std::fs::write(dir.join(&name), b"original").expect("seed");
+        for name in proxy_dll_names() {
+            std::fs::write(dir.join(&name), b"original").expect("seed original dll");
         }
         // Simulate the crash window
         std::fs::rename(dir.join("ddraw.dll"), dir.join("_ddraw.dll")).expect("stash");
         std::fs::write(dir.join("ddraw.dll"), b"proxy").expect("leftover");
-        let planted = write_proxy(&dir, &candidates(), b"proxy").expect("heals");
+        let planted = write_proxy(&dir, &proxy_dll_names(), b"proxy").expect("heal leftover proxy");
         assert_eq!(planted.path, dir.join("ddraw.dll"));
-        assert_eq!(std::fs::read(&planted.path).expect("read"), b"proxy");
+        assert_eq!(std::fs::read(&planted.path).expect("read back planted dll"), b"proxy");
         let backup = planted.backup.clone().expect("backup recorded");
-        assert_eq!(std::fs::read(&backup).expect("read"), b"original");
+        assert_eq!(std::fs::read(&backup).expect("read back original dll"), b"original");
         remove_proxy(&planted);
-        assert_eq!(std::fs::read(&planted.path).expect("read"), b"original");
+        assert_eq!(std::fs::read(&planted.path).expect("read back restored dll"), b"original");
         std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn foreign_squatter_with_backup_still_errors() {
         let dir = scratch_dir("foreign");
-        for name in candidates() {
-            std::fs::write(dir.join(&name), b"original").expect("seed");
+        for name in proxy_dll_names() {
+            std::fs::write(dir.join(&name), b"original").expect("seed original dll");
         }
-        std::fs::write(dir.join("_ddraw.dll"), b"someone else").expect("seed");
-        let Err(Error::ProxyNamesTaken) = write_proxy(&dir, &candidates(), b"proxy") else {
+        std::fs::write(dir.join("_ddraw.dll"), b"someone else").expect("seed original dll");
+        let Err(Error::ProxyNamesTaken) = write_proxy(&dir, &proxy_dll_names(), b"proxy") else {
             panic!("foreign files must keep ProxyNamesTaken");
         };
         std::fs::remove_dir_all(&dir).ok();

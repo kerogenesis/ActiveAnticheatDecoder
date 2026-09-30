@@ -7,10 +7,10 @@ use std::sync::Mutex;
 use std::sync::mpsc::channel;
 use std::time::Duration;
 
-use crate::capture::acquire::{AcquireSource, acquire_profile};
-use crate::client::{config, resolve_client_layout};
+use crate::capture::acquire::{KeyOrigin, load_or_capture_key};
+use crate::client::{config, resolve_from_client_dir};
 use crate::error::{Error, IoAction, Result};
-use crate::format::{aac, manifest, pipeline as fmt_decode};
+use crate::format::{aac, manifest, pipeline};
 use crate::storage::{cache, output, scan};
 use crate::system::term;
 
@@ -20,20 +20,19 @@ const CAPTURE_TIMEOUT: Duration = Duration::from_secs(60);
 const PROXY_DLL: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/aa_proxy.dll"));
 
 #[derive(Default)]
-struct Outcome {
-    clean_paths: Vec<PathBuf>,
+struct BatchResult {
+    decrypted_paths: Vec<PathBuf>,
     failures: Vec<(PathBuf, Error)>,
 }
 
-type DecodeOutcome = (PathBuf, String, Result<(PathBuf, bool)>);
-type DecodeMessage = (usize, DecodeOutcome);
+type DecryptOutcome = (PathBuf, String, Result<(PathBuf, bool)>);
+type OrderedOutcome<T> = (usize, T);
 type DroppedOutcome = (PathBuf, String, Result<PathBuf>);
-type DroppedMessage = (usize, DroppedOutcome);
 
 fn drain_ordered<T>(
     count: usize,
     rx: &std::sync::mpsc::Receiver<(usize, T)>,
-    mut on_item: impl FnMut(usize, usize, T),
+    mut emit_in_order: impl FnMut(usize, usize, T),
 ) {
     let mut pending: BTreeMap<usize, T> = BTreeMap::new();
     let mut next = 0usize;
@@ -43,53 +42,53 @@ fn drain_ordered<T>(
         };
         pending.insert(idx, item);
         while let Some(item) = pending.remove(&next) {
-            on_item(next + 1, count, item);
+            emit_in_order(next + 1, count, item);
             next += 1;
         }
     }
 }
 
-fn short_name(path: &Path) -> String {
+fn file_name_fallback(path: &Path) -> String {
     path.file_name()
-        .map(|n| n.to_string_lossy().into_owned())
+        .map(|file_name| file_name.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.display().to_string())
 }
 
-fn report_outcome(outcome: &Outcome, output_root: &Path) {
+fn report_outcome(outcome: &BatchResult, output_root: &Path) {
     println!();
-    let total = outcome.clean_paths.len() + outcome.failures.len();
+    let total = outcome.decrypted_paths.len() + outcome.failures.len();
     if total == 1 {
         if outcome.failures.is_empty() {
-            let name = short_name(&outcome.clean_paths[0]);
-            term::plain_line(obfstr!("Result:"), &format!("{name} decrypted"));
+            let name = file_name_fallback(&outcome.decrypted_paths[0]);
+            term::result_line(obfstr!("Result:"), &format!("{name} decrypted"));
         } else {
-            let name = short_name(&outcome.failures[0].0);
+            let name = file_name_fallback(&outcome.failures[0].0);
             let msg = if outcome.failures[0].1.is_key_mismatch() {
                 format!("{name} failed ({})", failure_detail(outcome))
             } else {
                 format!("{name} failed")
             };
-            term::plain_line(obfstr!("Result:"), &msg);
+            term::result_line(obfstr!("Result:"), &msg);
         }
-    } else if total == 2 && outcome.clean_paths.len() == 1 && outcome.failures.len() == 1 {
-        let ok_name = short_name(&outcome.clean_paths[0]);
-        let fail_name = short_name(&outcome.failures[0].0);
+    } else if total == 2 && outcome.decrypted_paths.len() == 1 && outcome.failures.len() == 1 {
+        let ok_name = file_name_fallback(&outcome.decrypted_paths[0]);
+        let fail_name = file_name_fallback(&outcome.failures[0].0);
         let msg = if outcome.failures[0].1.is_key_mismatch() {
             format!("{ok_name} decrypted, {fail_name} failed ({})", failure_detail(outcome))
         } else {
             format!("{ok_name} decrypted, {fail_name} failed")
         };
-        term::plain_line(obfstr!("Result:"), &msg);
+        term::result_line(obfstr!("Result:"), &msg);
     } else if outcome.failures.is_empty() {
-        let n = outcome.clean_paths.len();
-        let msg = if n == 1 {
+        let decrypted_count = outcome.decrypted_paths.len();
+        let msg = if decrypted_count == 1 {
             obfstr!("all 1 file decrypted").to_owned()
         } else {
-            format!("all {n} files decrypted")
+            format!("all {decrypted_count} files decrypted")
         };
-        term::plain_line(obfstr!("Result:"), &msg);
-    } else if outcome.clean_paths.is_empty() {
-        term::plain_line(
+        term::result_line(obfstr!("Result:"), &msg);
+    } else if outcome.decrypted_paths.is_empty() {
+        term::result_line(
             obfstr!("Result:"),
             &format!(
                 "0 decrypted, {} failed ({})",
@@ -98,29 +97,29 @@ fn report_outcome(outcome: &Outcome, output_root: &Path) {
             ),
         );
     } else {
-        term::plain_line(
+        term::result_line(
             obfstr!("Result:"),
             &format!(
                 "{} decrypted, {} failed ({})",
-                outcome.clean_paths.len(),
+                outcome.decrypted_paths.len(),
                 outcome.failures.len(),
                 failure_detail(outcome),
             ),
         );
     }
-    if !outcome.clean_paths.is_empty() {
-        term::plain_line(obfstr!("Clean files:"), &output_root.display().to_string());
+    if !outcome.decrypted_paths.is_empty() {
+        term::result_line(obfstr!("Clean files:"), &output_root.display().to_string());
     }
 }
 
-fn failure_detail(outcome: &Outcome) -> String {
+fn failure_detail(outcome: &BatchResult) -> String {
     let mut key_files = Vec::new();
     let mut other_files = Vec::new();
     for (path, error) in &outcome.failures {
         if error.is_key_mismatch() {
-            key_files.push(short_name(path));
+            key_files.push(file_name_fallback(path));
         } else {
-            other_files.push(short_name(path));
+            other_files.push(file_name_fallback(path));
         }
     }
     let mut parts = Vec::new();
@@ -136,58 +135,58 @@ fn failure_detail(outcome: &Outcome) -> String {
     parts.join("; ")
 }
 
-/// Parallel decode of every found container with one profile.
-fn decode_all(
+/// Parallel decrypt of every found container with one profile.
+fn decrypt_all_containers(
     files: &[scan::FoundContainer],
-    profile: &aac::RsaProfile,
+    rsa_profile: &aac::RsaProfile,
     root: &Path,
     output_root: &Path,
     auto_decode_gamekit: bool,
-) -> Outcome {
-    let (tx, rx) = channel::<DecodeMessage>();
+) -> BatchResult {
+    let (tx, rx) = channel::<OrderedOutcome<DecryptOutcome>>();
     std::thread::scope(|s| {
         s.spawn(|| {
             files.par_iter().enumerate().for_each(|(idx, found)| {
                 let source = &found.path;
-                let target_rel = output::relative(source, root);
+                let relative_path = output::relative_display(source, root);
                 let decoded = fs::read(source)
                     .map_err(|source_err| Error::io(IoAction::Read, source, source_err))
                     .and_then(|bytes| {
-                        fmt_decode::decode_aac_file(
+                        pipeline::decrypt_aac_file(
                             source,
                             bytes,
-                            std::slice::from_ref(profile),
+                            std::slice::from_ref(rsa_profile),
                             root,
                             output_root,
                             auto_decode_gamekit,
                         )
                     });
-                let _ = tx.send((idx, (source.to_path_buf(), target_rel, decoded)));
+                let _ = tx.send((idx, (source.to_path_buf(), relative_path, decoded)));
             });
         });
 
-        let mut outcome = Outcome::default();
+        let mut outcome = BatchResult::default();
         drain_ordered(
             files.len(),
             &rx,
-            |index, total, (source, target_rel, decoded): DecodeOutcome| {
-                let (is_ok, label, err_str) = match &decoded {
+            |position, total, (source, relative_path, decoded): DecryptOutcome| {
+                let (succeeded, label, err_str) = match &decoded {
                     Ok((_, gamekit)) => {
                         let label = if *gamekit {
-                            format!("{} {target_rel}", term::gamekit_tag())
+                            format!("{} {relative_path}", term::gamekit_tag())
                         } else {
-                            target_rel.clone()
+                            relative_path.clone()
                         };
                         (true, label, None)
                     }
                     Err(error) => {
                         let reason = (!error.is_key_mismatch()).then(|| error.to_string());
-                        (false, target_rel.clone(), reason)
+                        (false, relative_path.clone(), reason)
                     }
                 };
-                term::step_result(index, total, &label, is_ok, err_str.as_deref());
+                term::print_indexed_result(position, total, &label, succeeded, err_str.as_deref());
                 match decoded {
-                    Ok((destination, _)) => outcome.clean_paths.push(destination),
+                    Ok((destination, _)) => outcome.decrypted_paths.push(destination),
                     Err(error) => outcome.failures.push((source, error)),
                 }
             },
@@ -196,11 +195,11 @@ fn decode_all(
     })
 }
 
-fn is_cache_poisoned(outcome: &Outcome, source: AcquireSource) -> bool {
-    source == AcquireSource::Cache
-        && outcome.clean_paths.is_empty()
+fn cached_key_failed_all(outcome: &BatchResult, source: KeyOrigin) -> bool {
+    source == KeyOrigin::Cached
+        && outcome.decrypted_paths.is_empty()
         && !outcome.failures.is_empty()
-        && outcome.failures.iter().all(|(_, e)| matches!(e, Error::DecodeFailed { .. }))
+        && outcome.failures.iter().all(|(_, e)| matches!(e, Error::DecodeAttemptsFailed { .. }))
 }
 
 pub fn wait_before_exit(interactive: bool) {
@@ -214,51 +213,54 @@ pub fn banner() {
 }
 
 pub fn run_scan(picked: &Path, interactive: bool) {
-    let Some(layout) = resolve_client_layout(picked) else {
-        term::field_line(obfstr!("+ Client:"), &picked.display().to_string());
+    let Some(layout) = resolve_from_client_dir(picked) else {
+        term::status_line(obfstr!("+ Client:"), &picked.display().to_string());
         term::error_line(obfstr!("I can't find the client here: expected system\\l2.exe..."));
         wait_before_exit(interactive);
         return;
     };
 
-    let root = layout.root.as_std_path();
+    let root = layout.client_dir.as_std_path();
     let system_dir = layout.system_dir.as_std_path();
 
-    term::field_line(obfstr!("+ Client:"), &root.display().to_string());
+    term::status_line(obfstr!("+ Client:"), &root.display().to_string());
 
     let config_path = output::executable_directory().join(obfstr!("config.ini"));
-    let candidates = config::proxy_candidates(&config_path);
+    let proxy_dll_names = config::proxy_candidates(&config_path);
     let auto_decode_gamekit =
         layout.is_scryde() && config::scryde_gamekitdata_auto_decode(&config_path);
 
-    let mut acquired = match acquire_profile(
+    let mut acquired = match load_or_capture_key(
         system_dir,
-        &layout.executable,
-        &candidates,
+        &layout.exe_name,
+        &proxy_dll_names,
         PROXY_DLL,
         CAPTURE_TIMEOUT,
     ) {
-        Ok(a) => a,
+        Ok(captured_key) => captured_key,
         Err(error) => {
             if error.is_elevation_required() {
-                term::field_line(obfstr!("+ Status:"), obfstr!("run the program as administrator"));
+                term::status_line(
+                    obfstr!("+ Status:"),
+                    obfstr!("run the program as administrator"),
+                );
                 crate::system::elevation::show_elevation_required();
             } else {
-                term::field_line(obfstr!("+ Status:"), &format!("Key capture failed: {error}"));
+                term::status_line(obfstr!("+ Status:"), &format!("Key capture failed: {error}"));
             }
             wait_before_exit(interactive);
             return;
         }
     };
     match acquired.source {
-        AcquireSource::Cache => term::field_line(obfstr!("+ Key:"), obfstr!("from cache")),
-        AcquireSource::Live => {
-            term::field_line(obfstr!("+ Key:"), obfstr!("captured live, cached for next run"))
+        KeyOrigin::Cached => term::status_line(obfstr!("+ Key:"), obfstr!("from cache")),
+        KeyOrigin::Captured => {
+            term::status_line(obfstr!("+ Key:"), obfstr!("captured live, cached for next run"))
         }
     }
 
     let mut spinner = term::Spinner::new(obfstr!("scanning tree"));
-    let result = scan::scan_tree(root, &mut |examined| spinner.tick(examined));
+    let result = scan::scan_tree(root, &mut |examined| spinner.tick_files(examined));
     spinner.finish();
     for error in &result.walk_errors {
         term::error_line(&format!("{} {error}", obfstr!("scan walk error:")));
@@ -266,37 +268,51 @@ pub fn run_scan(picked: &Path, interactive: bool) {
 
     let status =
         format!("scanned {} files ({} targets found)", result.files_examined, result.aac.len());
-    term::field_line(obfstr!("+ Status:"), &status);
+    term::status_line(obfstr!("+ Status:"), &status);
 
     if result.aac.is_empty() {
         wait_before_exit(interactive);
         return;
     }
 
-    let output_root = output::output_root();
+    let output_root = output::new_run_output_dir();
 
-    let mut outcome =
-        decode_all(&result.aac, &acquired.profile, root, &output_root, auto_decode_gamekit);
+    let mut outcome = decrypt_all_containers(
+        &result.aac,
+        &acquired.rsa_profile,
+        root,
+        &output_root,
+        auto_decode_gamekit,
+    );
 
-    if is_cache_poisoned(&outcome, acquired.source) {
+    if cached_key_failed_all(&outcome, acquired.source) {
         term::error_line(obfstr!("Cached key failed for all files — retrying live capture..."));
-        cache::invalidate_cache(system_dir, &layout.executable);
-        if let Ok(live) =
-            acquire_profile(system_dir, &layout.executable, &candidates, PROXY_DLL, CAPTURE_TIMEOUT)
-        {
+        cache::invalidate_cache(system_dir, &layout.exe_name);
+        if let Ok(live) = load_or_capture_key(
+            system_dir,
+            &layout.exe_name,
+            &proxy_dll_names,
+            PROXY_DLL,
+            CAPTURE_TIMEOUT,
+        ) {
             match live.source {
-                AcquireSource::Cache => {
-                    term::field_line(obfstr!("+ Key:"), obfstr!("from cache (retry)"))
+                KeyOrigin::Cached => {
+                    term::status_line(obfstr!("+ Key:"), obfstr!("from cache (retry)"))
                 }
-                AcquireSource::Live => {
-                    term::field_line(obfstr!("+ Key:"), obfstr!("captured live (retry)"))
+                KeyOrigin::Captured => {
+                    term::status_line(obfstr!("+ Key:"), obfstr!("captured live (retry)"))
                 }
             }
             acquired = live;
             println!();
-            term::plain_label(obfstr!("Retrying decoding with live key:"));
-            outcome =
-                decode_all(&result.aac, &acquired.profile, root, &output_root, auto_decode_gamekit);
+            term::section_title(obfstr!("Retrying decoding with live key:"));
+            outcome = decrypt_all_containers(
+                &result.aac,
+                &acquired.rsa_profile,
+                root,
+                &output_root,
+                auto_decode_gamekit,
+            );
         }
     }
 
@@ -309,7 +325,7 @@ fn decode_dropped_file(path: &Path, name: &str, output_root: &Path) -> Result<Pa
     let root = path.parent().unwrap_or(Path::new(""));
 
     if manifest::is_hash_manifest_name(name) {
-        return fmt_decode::decode_hash_manifest_file(path, &bytes, root, output_root);
+        return pipeline::decrypt_hash_manifest_file(path, &bytes, root, output_root);
     }
 
     if aac::is_aac_container(&bytes) {
@@ -320,13 +336,13 @@ fn decode_dropped_file(path: &Path, name: &str, output_root: &Path) -> Result<Pa
 }
 
 pub fn run_dropped_files(paths: &[PathBuf]) {
-    let output_root = output::output_root();
+    let output_root = output::new_run_output_dir();
 
-    term::field_line(obfstr!("+ Files:"), &format!("{} dropped files", paths.len()));
+    term::status_line(obfstr!("+ Files:"), &format!("{} dropped files", paths.len()));
     println!();
-    term::plain_label(obfstr!("Decoding:"));
+    term::section_title(obfstr!("Decoding:"));
 
-    let (tx, rx) = channel::<DroppedMessage>();
+    let (tx, rx) = channel::<OrderedOutcome<DroppedOutcome>>();
     let outcome = std::thread::scope(|s| {
         s.spawn(|| {
             paths.par_iter().enumerate().for_each(|(idx, path)| {
@@ -341,16 +357,20 @@ pub fn run_dropped_files(paths: &[PathBuf]) {
             });
         });
 
-        let mut outcome = Outcome::default();
-        drain_ordered(paths.len(), &rx, |index, total, (path, name, decoded): DroppedOutcome| {
-            let is_ok = decoded.is_ok();
-            let err_str = decoded.as_ref().err().map(|e| e.to_string());
-            term::step_result(index, total, &name, is_ok, err_str.as_deref());
-            match decoded {
-                Ok(destination) => outcome.clean_paths.push(destination),
-                Err(error) => outcome.failures.push((path, error)),
-            }
-        });
+        let mut outcome = BatchResult::default();
+        drain_ordered(
+            paths.len(),
+            &rx,
+            |position, total, (path, name, decoded): DroppedOutcome| {
+                let succeeded = decoded.is_ok();
+                let err_str = decoded.as_ref().err().map(|error| error.to_string());
+                term::print_indexed_result(position, total, &name, succeeded, err_str.as_deref());
+                match decoded {
+                    Ok(destination) => outcome.decrypted_paths.push(destination),
+                    Err(error) => outcome.failures.push((path, error)),
+                }
+            },
+        );
         outcome
     });
 
@@ -368,7 +388,7 @@ pub fn run_hash_manifest_files(paths: &[PathBuf]) {
 
         let decoded = fs::read(path)
             .map_err(|source| Error::io(IoAction::Read, path, source))
-            .and_then(|bytes| manifest::decode_manifest(&bytes))
+            .and_then(|bytes| manifest::decrypt_manifest_text(&bytes))
             .and_then(|text| output::write_output(&destination, text.as_bytes()));
 
         if let Err(error) = decoded {
@@ -396,27 +416,28 @@ pub fn run_hash_manifest_files(paths: &[PathBuf]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::DecodeFailure;
+    use crate::error::PerKeyFailure;
 
-    fn key_failure(name: &str) -> (PathBuf, Error) {
+    fn key_mismatch_failure(name: &str) -> (PathBuf, Error) {
         (
             PathBuf::from(name),
-            Error::DecodeFailed {
-                failures: vec![DecodeFailure {
-                    profile: "cache".to_owned(),
+            Error::DecodeAttemptsFailed {
+                failures: vec![PerKeyFailure {
+                    key_origin: "cache".to_owned(),
                     error: Error::Pkcs1PaddingInvalid,
                 }],
             },
         )
     }
 
-    fn outcome_of(failures: Vec<(PathBuf, Error)>) -> Outcome {
-        Outcome { clean_paths: Vec::new(), failures }
+    fn batch_with_failures(failures: Vec<(PathBuf, Error)>) -> BatchResult {
+        BatchResult { decrypted_paths: Vec::new(), failures }
     }
 
     #[test]
     fn detail_explains_key_mismatch_only() {
-        let detail = failure_detail(&outcome_of(vec![key_failure("a/Service.u")]));
+        let detail =
+            failure_detail(&batch_with_failures(vec![key_mismatch_failure("a/Service.u")]));
         assert_eq!(
             detail,
             "looks like we're missing the right key in memory for these files: Service.u"
@@ -425,8 +446,8 @@ mod tests {
 
     #[test]
     fn detail_splits_mixed_failures() {
-        let detail = failure_detail(&outcome_of(vec![
-            key_failure("Service.u"),
+        let detail = failure_detail(&batch_with_failures(vec![
+            key_mismatch_failure("Service.u"),
             (PathBuf::from("Maps/x.unr"), Error::NotAacContainer),
         ]));
         assert!(detail.starts_with("looks like we're missing the right key"), "{detail}");
@@ -436,7 +457,7 @@ mod tests {
 
     #[test]
     fn detail_keeps_plain_names_without_key_mismatch() {
-        let detail = failure_detail(&outcome_of(vec![(
+        let detail = failure_detail(&batch_with_failures(vec![(
             PathBuf::from("Maps/x.unr"),
             Error::NotAacContainer,
         )]));

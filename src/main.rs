@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use std::collections::HashSet;
 
-use decoder::client::resolve_client_layout_with_ancestors;
+use decoder::client::resolve_from_nested_path;
 use decoder::run;
 use decoder::storage::output;
 use decoder::system::{elevation, term, ui};
@@ -56,7 +56,7 @@ fn main() {
 
     let mut seen_roots: HashSet<String> = HashSet::new();
     for directory in &directories {
-        let Some(layout) = resolve_client_layout_with_ancestors(directory) else {
+        let Some(layout) = resolve_from_nested_path(directory) else {
             term::error_line(&format!(
                 "{} {}",
                 obfstr!("not a client folder:"),
@@ -67,16 +67,16 @@ fn main() {
         // Windows paths are case-insensitive,
         // so normalize before dedup to avoid scanning
         // and capturing the key for one client twice.
-        let key = normalize_root_key(layout.root.as_str());
+        let key = normalize_client_dir_key(layout.client_dir.as_str());
         if seen_roots.insert(key) {
-            run::run_scan(layout.root.as_std_path(), true);
+            run::run_scan(layout.client_dir.as_std_path(), true);
         }
     }
 }
 
-/// Lowercase, slash-normalized root key for dedup on Windows.
-fn normalize_root_key(root: &str) -> String {
-    root.replace('/', "\\").trim_end_matches('\\').to_lowercase()
+/// Lowercase, slash-normalized client-dir key for dedup on Windows.
+fn normalize_client_dir_key(client_dir: &str) -> String {
+    client_dir.replace('/', "\\").trim_end_matches('\\').to_lowercase()
 }
 
 #[derive(Default)]

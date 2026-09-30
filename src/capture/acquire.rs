@@ -6,44 +6,44 @@ use crate::format::aac::RsaProfile;
 use crate::storage::cache;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AcquireSource {
-    Cache,
-    Live,
+pub enum KeyOrigin {
+    Cached,
+    Captured,
 }
 
-pub struct Acquired {
-    pub profile: RsaProfile,
-    pub source: AcquireSource,
+pub struct CapturedKey {
+    pub rsa_profile: RsaProfile,
+    pub source: KeyOrigin,
 }
 
 /// Returns an [`RsaProfile`] via cache or client launch.
-pub fn acquire_profile(
+pub fn load_or_capture_key(
     system_dir: &Path,
-    client_exe: &str,
-    candidates: &[String],
+    exe_name: &str,
+    proxy_candidates: &[String],
     proxy_dll: &[u8],
     timeout: Duration,
-) -> Result<Acquired> {
-    if let Some(cached) = cache::load_cached_profile(system_dir, client_exe) {
-        return Ok(Acquired { profile: cached, source: AcquireSource::Cache });
+) -> Result<CapturedKey> {
+    if let Some(cached) = cache::load_cached_profile(system_dir, exe_name) {
+        return Ok(CapturedKey { rsa_profile: cached, source: KeyOrigin::Cached });
     }
 
     let mut spinner = crate::system::term::Spinner::new("capturing key");
     let result = crate::capture::live::capture_key(
         system_dir,
-        client_exe,
-        candidates,
+        exe_name,
+        proxy_candidates,
         proxy_dll,
         timeout,
-        &mut || spinner.spin(),
+        &mut || spinner.pulse(),
     );
     spinner.finish();
 
     match result {
-        Ok(profile) => {
-            cache::save_cached_profile(system_dir, client_exe, &profile);
-            Ok(Acquired { profile, source: AcquireSource::Live })
+        Ok(rsa_profile) => {
+            cache::save_cached_profile(system_dir, exe_name, &rsa_profile);
+            Ok(CapturedKey { rsa_profile, source: KeyOrigin::Captured })
         }
-        Err(e) => Err(e),
+        Err(capture_error) => Err(capture_error),
     }
 }

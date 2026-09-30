@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use crate::error::{Error, IoAction, Result};
 use crate::format::manifest;
 
+/// Days-to-civil-date per Howard Hinnant's algorithm
 fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let z = days + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
@@ -69,31 +70,36 @@ fn resolve_project_folder(parent: &Path, project: &str, date: &str) -> PathBuf {
     }
 }
 
-pub fn output_root() -> PathBuf {
+pub fn new_run_output_dir() -> PathBuf {
     let mut root = executable_directory();
     root.push(obfstr!("clean_files"));
     let date = today_stamp();
     resolve_project_folder(&root, obfstr!("Project"), &date)
 }
 
-pub fn relative(path: &Path, base: &Path) -> String {
+pub fn relative_display(path: &Path, base: &Path) -> String {
     let trimmed = path.strip_prefix(base).unwrap_or(path);
     trimmed.display().to_string()
 }
 
-pub fn mirrored_path(root: &Path, source: &Path, output_root: &Path) -> PathBuf {
+pub fn mirrored_output_path(root: &Path, source: &Path, output_dir: &Path) -> PathBuf {
     match source.strip_prefix(root) {
-        Ok(relative) => output_root.join(relative),
+        Ok(rel) => output_dir.join(rel),
         Err(_) => match source.file_name() {
-            Some(name) => output_root.join(name),
-            None => output_root.to_path_buf(),
+            Some(name) => output_dir.join(name),
+            None => output_dir.to_path_buf(),
         },
     }
 }
 
-pub fn output_path_for(root: &Path, source: &Path, output_root: &Path, suffix: &str) -> PathBuf {
-    let relative = source.strip_prefix(root).unwrap_or(source);
-    let mut destination = output_root.join(relative);
+pub fn manifest_output_path(
+    root: &Path,
+    source: &Path,
+    output_dir: &Path,
+    suffix: &str,
+) -> PathBuf {
+    let rel = source.strip_prefix(root).unwrap_or(source);
+    let mut destination = output_dir.join(rel);
     destination.set_file_name(hash_manifest_name(source, suffix));
     destination
 }
@@ -135,9 +141,12 @@ mod tests {
         let root = Path::new("/client");
         let source = Path::new("/client/system/armorgrp.dat");
         let out = Path::new("/out");
-        assert_eq!(mirrored_path(root, source, out), PathBuf::from("/out/system/armorgrp.dat"));
         assert_eq!(
-            output_path_for(root, source, out, "_clean.txt"),
+            mirrored_output_path(root, source, out),
+            PathBuf::from("/out/system/armorgrp.dat")
+        );
+        assert_eq!(
+            manifest_output_path(root, source, out, "_clean.txt"),
             PathBuf::from("/out/system/armorgrp_clean.txt")
         );
     }
@@ -146,7 +155,7 @@ mod tests {
     fn foreign_paths_cannot_escape_the_output_root() {
         let root = Path::new("/client");
         let out = Path::new("/out");
-        let foreign = mirrored_path(root, Path::new("/elsewhere/evil.u"), out);
+        let foreign = mirrored_output_path(root, Path::new("/elsewhere/evil.u"), out);
         assert_eq!(foreign, PathBuf::from("/out/evil.u"));
         assert!(!foreign.to_string_lossy().contains("elsewhere"));
     }
@@ -155,8 +164,8 @@ mod tests {
     fn files_sharing_a_stem_do_not_collide() {
         let root = Path::new("/client");
         let out = Path::new("/out");
-        let unreal = mirrored_path(root, Path::new("/client/system/interface.u"), out);
-        let xdat = mirrored_path(root, Path::new("/client/system/interface.xdat"), out);
+        let unreal = mirrored_output_path(root, Path::new("/client/system/interface.u"), out);
+        let xdat = mirrored_output_path(root, Path::new("/client/system/interface.xdat"), out);
         assert_eq!(unreal, PathBuf::from("/out/system/interface.u"));
         assert_eq!(xdat, PathBuf::from("/out/system/interface.xdat"));
         assert_ne!(unreal, xdat);
@@ -166,11 +175,11 @@ mod tests {
     fn relative_paths_are_trimmed_to_the_root() {
         let root = Path::new("/client");
         let source = Path::new("/client/system/armorgrp.dat");
-        assert_eq!(relative(source, root), "system/armorgrp.dat");
+        assert_eq!(relative_display(source, root), "system/armorgrp.dat");
     }
 
     #[test]
-    fn dropped_hash_manifest_file_is_routed_by_name() {
+    fn single_hash_manifest_file_is_routed_by_name() {
         assert!(manifest::is_hash_manifest_name("ft_12.dat"));
         assert!(!manifest::is_hash_manifest_name("armorgrp.dat"));
         assert!(is_hash_manifest_path(Path::new("D:/downloads/FT_1223859.dat")));

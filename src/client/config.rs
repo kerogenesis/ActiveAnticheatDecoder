@@ -57,7 +57,7 @@ fn read_config(config_path: &Path) -> Option<String> {
 
 fn candidates_from(configured: Option<String>) -> Vec<String> {
     let mut names = Vec::new();
-    if let Some(name) = configured.filter(|name| valid_proxy_name(name)) {
+    if let Some(name) = configured.filter(|candidate| valid_proxy_name(candidate)) {
         names.push(with_dll_extension(&name));
     }
     names.push(obfstr!("ddraw.dll").to_owned());
@@ -79,9 +79,9 @@ pub fn proxy_candidates(config_path: &Path) -> Vec<String> {
 pub fn scryde_gamekitdata_auto_decode(config_path: &Path) -> bool {
     read_config(config_path)
         .and_then(|text| parse_ini_key(&text, obfstr!("scryde_gamekitdata_auto_decode")))
-        .map(|val| {
+        .map(|raw_value| {
             !matches!(
-                val.trim().to_lowercase().as_str(),
+                raw_value.trim().to_lowercase().as_str(),
                 "false" | "0" | "no" | "n" | "off" | "disable" | "disabled"
             )
         })

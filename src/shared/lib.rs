@@ -66,7 +66,7 @@ mod tests {
     }
 
     #[test]
-    fn hex_roundtrips() {
+    fn hex_round_trips() {
         assert_eq!(hex_to_bytes("0100ff"), Some(vec![0x01, 0x00, 0xFF]));
         assert_eq!(hex_to_bytes(""), None);
         assert_eq!(hex_to_bytes("abc"), None);

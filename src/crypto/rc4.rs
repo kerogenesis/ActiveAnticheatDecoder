@@ -39,7 +39,7 @@ mod tests {
     }
 
     #[test]
-    fn is_an_involution() {
+    fn rc4_round_trip_restores_plaintext() {
         let key = b"some key";
         let data = b"round trip payload";
         let encrypted = crypt(data, key);

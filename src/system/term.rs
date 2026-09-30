@@ -151,23 +151,23 @@ pub fn banner() {
     println!();
 }
 
-pub fn field_line(label: &str, value: &str) {
-    let _guard = CONSOLE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+pub fn status_line(label: &str, value: &str) {
+    let _guard = CONSOLE_MUTEX.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     println!("{}  {value}", paint(Color::Yellow, label));
 }
 
-pub fn plain_line(label: &str, value: &str) {
-    let _guard = CONSOLE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+pub fn result_line(label: &str, value: &str) {
+    let _guard = CONSOLE_MUTEX.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     println!("{label}  {value}");
 }
 
-pub fn plain_label(label: &str) {
-    let _guard = CONSOLE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+pub fn section_title(label: &str) {
+    let _guard = CONSOLE_MUTEX.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     println!("{label}");
 }
 
 pub fn error_line(text: &str) {
-    let _guard = CONSOLE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = CONSOLE_MUTEX.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     println!("  {}", paint(Color::Red, text));
 }
 
@@ -175,16 +175,22 @@ pub fn gamekit_tag() -> String {
     paint(Color::LightBlue, "[GamekitData]")
 }
 
-pub fn step_result(index: usize, total: usize, label: &str, is_ok: bool, reason: Option<&str>) {
-    let _guard = CONSOLE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+pub fn print_indexed_result(
+    position: usize,
+    total: usize,
+    label: &str,
+    succeeded: bool,
+    reason: Option<&str>,
+) {
+    let _guard = CONSOLE_MUTEX.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let width = total.to_string().len();
-    if is_ok {
-        let prefix = paint(Color::Green, &format!("  [{index:>width$}/{total}]"));
+    if succeeded {
+        let prefix = paint(Color::Green, &format!("  [{position:>width$}/{total}]"));
         println!("  {prefix} {label}");
     } else {
-        let prefix = paint(Color::Red, &format!("  [{index:>width$}/{total}]"));
+        let prefix = paint(Color::Red, &format!("  [{position:>width$}/{total}]"));
         match reason {
-            Some(err) => println!("  {prefix} {label} (Error: {err})"),
+            Some(reason) => println!("  {prefix} {label} (Error: {reason})"),
             None => println!("  {prefix} {label}"),
         }
     }
@@ -220,7 +226,7 @@ impl Spinner {
         SPINNER_FRAMES[(self.frame - 1) % SPINNER_FRAMES.len()]
     }
 
-    pub fn tick(&mut self, count: usize) {
+    pub fn tick_files(&mut self, count: usize) {
         if !self.ready() {
             return;
         }
@@ -229,7 +235,7 @@ impl Spinner {
         let _ = io::stdout().flush();
     }
 
-    pub fn spin(&mut self) {
+    pub fn pulse(&mut self) {
         if !self.ready() {
             return;
         }
